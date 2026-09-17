@@ -36,16 +36,11 @@ Key directories and files for day-to-day work:
 
 ## UI and Sistent Guidance
 
-This repository consumes the Layer5 design system via `@sistent/sistent`.
+This repository consumes the Layer5 design system via `@sistent/sistent` with `styled-components`.
 
-- **Component Reuse**: Prefer importing existing UI primitives from `@sistent/sistent` (e.g., `Accordion`, `AccordionSummary`, `AccordionDetails`, `CustomTooltip`) for UI elements rather than hand-rolling duplicate components or ad-hoc styles.
-- **Design Contract Reference**:
-  - Do **not** create or maintain a separate `DESIGN.md` in this repository.
-  - Sistent is the source of truth for applicable design guidance for UI that uses Sistent.
-  - When referencing the design contract:
-    - **Local package**: Prefer reading `node_modules/@sistent/sistent/DESIGN.md` when it is present in the installed package.
-    - **Version-matched upstream**: If it is not present, consult the Sistent release tag matching the version actually resolved in `package-lock.json` rather than `master`.
-- **Styling**: When using `styled-components`, prefer existing Sistent tokens and theme values over introducing new hardcoded brand colors.
+- **Component Reuse:** Prefer existing `@sistent/sistent` UI primitives before creating custom components.
+- **Design Tokens:** Prefer existing Sistent theme/token values over hardcoded brand colors.
+- **Design Guidance Reference:** Consult `node_modules/@sistent/sistent/DESIGN.md` when available, or the Sistent release tag matching the resolved version in `package-lock.json` rather than `master`. Do not create or maintain a separate `DESIGN.md` in this repository.
 
 ## Contribution Guidelines
 
