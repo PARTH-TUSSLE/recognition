@@ -1,0 +1,210 @@
+name: Award Project Contributor Badges
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: "Merged Pull Request number in the caller repository"
+        required: true
+        type: number
+      dry_run:
+        description: "Simulate badge evaluation and skip live awards/labels"
+        required: false
+        type: boolean
+        default: false
+      slack_channel:
+        description: "Slack channel ID for bot command dispatch"
+        required: false
+        type: string
+        default: "CLDRKJZ0T"
+    secrets:
+      SLACK_BOT_TOKEN:
+        description: "Slack Bot Token for /award-badge dispatches"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: badge-award-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate-and-award:
+    name: Evaluate and Award Badges
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted recognition engine
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 pinned SHA
+        with:
+          repository: ${{ job.workflow_repository || 'layer5io/recognition' }}
+          ref: ${{ job.workflow_sha || github.sha }}
+          path: .recognition-engine
+          sparse-checkout: |
+            utils
+
+      - name: Collect PR metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          echo "Collecting metadata for PR #${PR_NUMBER} in ${TARGET_REPO}..."
+
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/files" --paginate > .pr-files.json
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/commits" --paginate > .pr-commits.json
+          gh api "repos/${TARGET_REPO}/issues/${PR_NUMBER}/labels" --paginate > .existing-labels.json
+
+          node -e '
+          const fs = require("fs");
+          const pr = JSON.parse(fs.readFileSync(".pr-info.json"));
+          const files = JSON.parse(fs.readFileSync(".pr-files.json"));
+          const commits = JSON.parse(fs.readFileSync(".pr-commits.json"));
+          fs.writeFileSync(".pr-metadata.json", JSON.stringify({ pr, files, commits }, null, 2));
+          '
+
+      - name: Run badge award orchestrator
+        env:
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node .recognition-engine/utils/award-orchestrator.js \
+            --metadata=".pr-metadata.json" \
+            --existing-labels=".existing-labels.json" \
+            --repo="${TARGET_REPO}" \
+            --out=".evaluation-result.json"
+
+      - name: Publish evaluation step summary
+        run: |
+          node -e '
+          const fs = require("fs");
+          const res = JSON.parse(fs.readFileSync(".evaluation-result.json"));
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, res.summaryMarkdown + "\n");
+          '
+
+      - name: Verify Slack credentials for production run
+        if: ${{ inputs.dry_run == false }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          PENDING_COUNT=$(node -e '
+          const fs = require("fs");
+          const res = JSON.parse(fs.readFileSync(".evaluation-result.json"));
+          console.log(res.pendingAwards.length);
+          ')
+
+          if [ "${PENDING_COUNT}" -gt 0 ] && [ -z "${SLACK_BOT_TOKEN:-}" ]; then
+            echo "::error::SLACK_BOT_TOKEN secret is required for production badge awards but was not provided. Failing workflow to prevent silent omission."
+            exit 1
+          fi
+
+      - name: Sequentially dispatch awards and apply tracking labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ inputs.slack_channel }}
+          IS_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          AWARDS_JSON=$(node -e '
+          const fs = require("fs");
+          const res = JSON.parse(fs.readFileSync(".evaluation-result.json"));
+          console.log(JSON.stringify(res.pendingAwards));
+          ')
+
+          EMAIL=$(node -e '
+          const fs = require("fs");
+          const res = JSON.parse(fs.readFileSync(".evaluation-result.json"));
+          console.log(res.recipientEmail || "");
+          ')
+
+          AWARD_COUNT=$(echo "${AWARDS_JSON}" | jq '. | length')
+          echo "Pending awards count: ${AWARD_COUNT}"
+
+          if [ "${AWARD_COUNT}" -eq 0 ]; then
+            echo "No pending awards to dispatch."
+            exit 0
+          fi
+
+          for i in $(seq 0 $((AWARD_COUNT - 1))); do
+            BADGE_SLUG=$(echo "${AWARDS_JSON}" | jq -r ".[$i].slug")
+            BADGE_NAME=$(echo "${AWARDS_JSON}" | jq -r ".[$i].name")
+            LABEL_NAME=$(echo "${AWARDS_JSON}" | jq -r ".[$i].trackingLabel")
+
+            echo "--------------------------------------------------------"
+            echo "Processing award $((i + 1)) of ${AWARD_COUNT}: ${BADGE_NAME} (${BADGE_SLUG})"
+
+            # Step 1: Dispatch to Slack
+            if [ "${IS_DRY_RUN}" = "true" ]; then
+              echo "[DRY-RUN] Would post to Slack channel ${SLACK_CHANNEL}: /award-badge ${EMAIL} ${BADGE_SLUG}"
+            else
+              echo "Dispatching Slack command: /award-badge ${EMAIL} ${BADGE_SLUG}"
+              PAYLOAD=$(jq -n \
+                --arg ch "${SLACK_CHANNEL}" \
+                --arg txt "/award-badge ${EMAIL} ${BADGE_SLUG}" \
+                '{channel: $ch, text: $txt}')
+
+              SLACK_RESP=$(curl -s -X POST "https://slack.com/api/chat.postMessage" \
+                -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "${PAYLOAD}")
+
+              SLACK_OK=$(echo "${SLACK_RESP}" | jq -r '.ok // false')
+              if [ "${SLACK_OK}" != "true" ]; then
+                SLACK_ERR=$(echo "${SLACK_RESP}" | jq -r '.error // "unknown"')
+                echo "::error::Slack dispatch failed for badge ${BADGE_SLUG}: ${SLACK_ERR}"
+                exit 1
+              fi
+              echo "Slack dispatch successful for ${BADGE_SLUG}."
+            fi
+
+            # Step 2: Race-Safe Label Provisioning & Label Write
+            if [ "${IS_DRY_RUN}" = "true" ]; then
+              echo "[DRY-RUN] Would create/verify label '${LABEL_NAME}' and apply to PR #${PR_NUMBER}"
+            else
+              echo "Ensuring label '${LABEL_NAME}' exists on ${TARGET_REPO}..."
+              LABEL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/${TARGET_REPO}/labels/${LABEL_NAME}")
+
+              if [ "${LABEL_STATUS}" != "200" ]; then
+                CREATE_RESP_FILE=$(mktemp)
+                HTTP_CODE=$(curl -s -w "%{http_code}" -o "${CREATE_RESP_FILE}" \
+                  -X POST \
+                  -H "Authorization: token ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/${TARGET_REPO}/labels" \
+                  -d "{\"name\":\"${LABEL_NAME}\",\"color\":\"0E7090\",\"description\":\"Automated contributor badge tracking\"}")
+
+                if [ "${HTTP_CODE}" = "201" ]; then
+                  echo "Label '${LABEL_NAME}' created successfully."
+                elif [ "${HTTP_CODE}" = "422" ]; then
+                  IS_ALREADY_EXISTS=$(jq -r '.errors[]? | select(.code == "already_exists") | .code' "${CREATE_RESP_FILE}")
+                  if [ "${IS_ALREADY_EXISTS}" = "already_exists" ]; then
+                    echo "Label '${LABEL_NAME}' already exists (race condition resolved)."
+                  else
+                    echo "::error::Fatal 422 error creating label '${LABEL_NAME}': $(cat "${CREATE_RESP_FILE}")"
+                    exit 1
+                  fi
+                else
+                  echo "::error::Failed to create label '${LABEL_NAME}' (HTTP ${HTTP_CODE}): $(cat "${CREATE_RESP_FILE}")"
+                  exit 1
+                fi
+              fi
+
+              # Apply label to PR
+              echo "Applying tracking label '${LABEL_NAME}' to PR #${PR_NUMBER}..."
+              gh issue edit "${PR_NUMBER}" --repo "${TARGET_REPO}" --add-label "${LABEL_NAME}"
+              echo "Applied tracking label '${LABEL_NAME}'."
+            fi
+          done
+
+          echo "Badge award processing completed successfully."
