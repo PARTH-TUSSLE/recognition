@@ -41,6 +41,26 @@ test('extractDcoTrailers extracts and validates standard trailers', () => {
   assert.equal(trailers[0].email, 'lee@layer5.io');
 });
 
+test('extractDcoTrailers rejects unanchored and prefixed trailer lines', () => {
+  const invalidMessages = [
+    'Not-Signed-off-by: Lee Calcote <lee@layer5.io>',
+    'Prefix Signed-off-by: Lee Calcote <lee@layer5.io>',
+    'Signed-off-by: Lee Calcote <lee@layer5.io> Suffix text',
+    'Some text before Signed-off-by: Lee Calcote <lee@layer5.io> and after'
+  ];
+
+  for (const msg of invalidMessages) {
+    const trailers = extractDcoTrailers(msg);
+    assert.equal(trailers.length, 0, `Expected trailer to be rejected in: ${msg}`);
+  }
+
+  // Valid with leading/trailing whitespace on its own line
+  const validWithWhitespace = `feat: update\n\n  Signed-off-by: Lee Calcote <lee@layer5.io>  \n`;
+  const trailers = extractDcoTrailers(validWithWhitespace);
+  assert.equal(trailers.length, 1);
+  assert.equal(trailers[0].email, 'lee@layer5.io');
+});
+
 test('isTrailerAttributableToAuthor handles direct matches and noreply requirements', () => {
   // Direct email match
   assert.equal(
@@ -51,13 +71,38 @@ test('isTrailerAttributableToAuthor handles direct matches and noreply requireme
     true
   );
 
-  // Noreply with matching name
+  // Noreply with matching name (@users.noreply.github.com)
   assert.equal(
     isTrailerAttributableToAuthor(
       { name: 'Alice Smith', email: 'alice.personal@example.com' },
       { name: 'Alice Smith', email: '12345+alicesmith@users.noreply.github.com' }
     ),
     true
+  );
+
+  // Noreply with matching name (@noreply.github.com)
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Alice Smith', email: 'alice.personal@example.com' },
+      { name: 'Alice Smith', email: 'alicesmith@noreply.github.com' }
+    ),
+    true
+  );
+
+  // Attacker domains mimicking noreply.github.com must fail closed
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Alice Smith', email: 'alice.personal@example.com' },
+      { name: 'Alice Smith', email: '12345+alicesmith@noreply.github.com.attacker.org' }
+    ),
+    false
+  );
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Alice Smith', email: 'alice.personal@example.com' },
+      { name: 'Alice Smith', email: 'alicesmith@users.noreply.github.com.evil.com' }
+    ),
+    false
   );
 
   // Noreply with mismatched name (must fail closed; arbitrary trailers not accepted)

@@ -46,7 +46,7 @@ function maskEmail(email) {
 function extractDcoTrailers(message) {
   if (!message || typeof message !== 'string') return [];
   const trailers = [];
-  const regex = /Signed-off-by:\s*([^<\r\n]+)<([^>\r\n]+)>/gi;
+  const regex = /^\s*Signed-off-by:\s*([^<\r\n]+)<([^>\r\n]+)>\s*$/gim;
   let match;
   while ((match = regex.exec(message)) !== null) {
     const name = match[1].trim();
@@ -85,7 +85,7 @@ function isTrailerAttributableToAuthor(trailer, gitAuthor) {
   }
 
   // Rule 2: GitHub noreply email requiring strict git author name match
-  const isNoreply = gitEmail.endsWith('@users.noreply.github.com') || gitEmail.includes('noreply.github.com');
+  const isNoreply = gitEmail.endsWith('@users.noreply.github.com') || gitEmail.endsWith('@noreply.github.com');
   if (isNoreply && gitName && tName === gitName) {
     return true;
   }
