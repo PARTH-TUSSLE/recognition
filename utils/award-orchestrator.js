@@ -34,12 +34,102 @@ function parseArgs(args) {
 }
 
 /**
- * Builds GitHub Actions step summary markdown
+ * Flattens slurped or paginated API response pages and handles edge cases.
+ * Handles:
+ * - Slurped array of pages: [[item1, item2], [item3]]
+ * - Single flattened page: [item1, item2]
+ * - Empty array: []
+ * - Null or non-array
+ *
+ * @param {any} input
+ * @returns {Array}
+ */
+function flattenPages(input) {
+  if (!input) return [];
+  if (!Array.isArray(input)) return [input];
+  if (input.length === 0) return [];
+
+  // Check if first element is an array (slurped page array)
+  if (Array.isArray(input[0])) {
+    const flattened = [];
+    for (const page of input) {
+      if (Array.isArray(page)) {
+        flattened.push(...page);
+      } else if (page) {
+        flattened.push(page);
+      }
+    }
+    return flattened;
+  }
+  return input;
+}
+
+/**
+ * Deduplicates an array of file objects or strings by filename.
+ * @param {any} files
+ * @returns {Array}
+ */
+function deduplicateFiles(files) {
+  const seen = new Set();
+  const deduped = [];
+  for (const f of flattenPages(files)) {
+    const filename = (typeof f === 'string' ? f : (f && f.filename ? f.filename : '')).trim().replace(/\\/g, '/');
+    if (filename && !seen.has(filename)) {
+      seen.add(filename);
+      deduped.push(f);
+    }
+  }
+  return deduped;
+}
+
+/**
+ * Deduplicates an array of commit objects by SHA.
+ * @param {any} commits
+ * @returns {Array}
+ */
+function deduplicateCommits(commits) {
+  const seen = new Set();
+  const deduped = [];
+  for (const c of flattenPages(commits)) {
+    if (!c) continue;
+    const sha = (c.sha || '').trim();
+    if (sha) {
+      if (!seen.has(sha)) {
+        seen.add(sha);
+        deduped.push(c);
+      }
+    } else {
+      deduped.push(c);
+    }
+  }
+  return deduped;
+}
+
+/**
+ * Deduplicates an array of labels by name.
+ * @param {any} labels
+ * @returns {Array}
+ */
+function deduplicateLabels(labels) {
+  const seen = new Set();
+  const deduped = [];
+  for (const l of flattenPages(labels)) {
+    const name = (typeof l === 'string' ? l : (l && l.name ? l.name : '')).trim().toLowerCase();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      deduped.push(l);
+    }
+  }
+  return deduped;
+}
+
+/**
+ * Builds GitHub Actions step summary markdown.
+ * Strictly avoids logging plaintext recipient email addresses.
  */
 function buildSummaryMarkdown({
   repo,
   prAuthor,
-  resolvedEmail,
   maskedEmail,
   dcoVerified,
   dcoReason,
@@ -53,7 +143,7 @@ function buildSummaryMarkdown({
   lines.push(`- **Target Repository**: \`${repo}\``);
   lines.push(`- **PR Author**: \`@${prAuthor || 'unknown'}\``);
 
-  if (resolvedEmail) {
+  if (maskedEmail) {
     lines.push(`- **Recipient Identity**: \`${maskedEmail}\` (${dcoVerified ? '✅ DCO Verified' : '⚠️ DCO Unverified'})`);
   } else {
     lines.push(`- **Recipient Identity**: ⚠️ Unresolved email`);
@@ -104,7 +194,36 @@ function buildSummaryMarkdown({
 }
 
 /**
+ * Strips all plaintext email addresses and commands to produce a sanitized public report.
+ * Safe for step summary, console logging, and dry-run display.
+ *
+ * @param {Object} internalResult
+ * @returns {Object} Sanitized report
+ */
+function getSanitizedReport(internalResult) {
+  return {
+    repo: internalResult.repo,
+    prAuthor: internalResult.prAuthor,
+    maskedEmail: internalResult.maskedEmail,
+    dcoVerified: internalResult.dcoVerified,
+    dcoReason: internalResult.dcoReason,
+    allEligibleBadges: internalResult.allEligibleBadges,
+    alreadyAwardedBadges: internalResult.alreadyAwardedBadges,
+    unawardedBadges: internalResult.unawardedBadges,
+    pendingAwards: (internalResult.pendingAwards || []).map(a => ({
+      slug: a.slug,
+      name: a.name,
+      ruleId: a.ruleId,
+      reason: a.reason,
+      trackingLabel: a.trackingLabel
+    })),
+    summaryMarkdown: internalResult.summaryMarkdown
+  };
+}
+
+/**
  * Orchestrates badge evaluation and award filtering.
+ * Normalizes multi-page GitHub API responses and ensures strict attribution.
  *
  * @param {Object} options
  * @param {Object} options.prMetadata PR metadata object or file content
@@ -129,16 +248,19 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
     ''
   ).trim();
 
-  // Extract labels on PR
+  // Extract and normalize labels with deduplication across pages
   const rawPrLabels = prMetadata.labels || (prMetadata.pr && prMetadata.pr.labels) || [];
-  const normalizedPrLabels = normalizeLabels(rawPrLabels);
+  const dedupedPrLabels = deduplicateLabels(rawPrLabels);
+  const normalizedPrLabels = normalizeLabels(dedupedPrLabels);
 
-  // Extract files
+  // Extract and normalize files with deduplication across pages
   const rawFiles = prMetadata.changedFiles || prMetadata.files || [];
-  const normalizedFiles = normalizeFiles(rawFiles);
+  const dedupedFiles = deduplicateFiles(rawFiles);
+  const normalizedFiles = normalizeFiles(dedupedFiles);
 
-  // Extract commits
-  const commits = prMetadata.commits || [];
+  // Extract and deduplicate commits across pages
+  const rawCommits = prMetadata.commits || [];
+  const dedupedCommits = deduplicateCommits(rawCommits);
 
   // Evaluate badge eligibility
   const { eligibleBadges } = evaluateBadges({
@@ -147,12 +269,15 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
     changedFiles: normalizedFiles
   });
 
-  // Resolve identity and DCO
-  const identity = resolveIdentity(prAuthor, commits);
+  // Resolve identity and DCO strictly to PR author
+  const identity = resolveIdentity(prAuthor, dedupedCommits);
   const maskedRecipientEmail = maskEmail(identity.resolvedEmail);
 
-  // Extract existing tracking labels
-  const allExistingLabels = normalizeLabels(existingLabels.length > 0 ? existingLabels : rawPrLabels);
+  // Extract existing tracking labels with deduplication
+  const sourceExistingLabels = existingLabels.length > 0 ? existingLabels : rawPrLabels;
+  const dedupedExisting = deduplicateLabels(sourceExistingLabels);
+  const allExistingLabels = normalizeLabels(dedupedExisting);
+
   const existingTrackingPrefix = 'badge-awarded:';
   const alreadyAwardedSlugs = new Set(
     allExistingLabels
@@ -181,7 +306,6 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
   const summaryMarkdown = buildSummaryMarkdown({
     repo,
     prAuthor,
-    resolvedEmail: identity.resolvedEmail,
     maskedEmail: maskedRecipientEmail,
     dcoVerified: identity.dcoVerified,
     dcoReason: identity.reason,
@@ -225,11 +349,26 @@ function runCli() {
 
   const repoOverride = args.repo || '';
   const result = orchestrateAwards({ prMetadata, existingLabels, repoOverride });
+  const sanitized = getSanitizedReport(result);
 
+  // Write sanitized public output
   if (args.out) {
-    fs.writeFileSync(path.resolve(args.out), JSON.stringify(result, null, 2), 'utf-8');
-  } else {
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    fs.writeFileSync(path.resolve(args.out), JSON.stringify(sanitized, null, 2), 'utf-8');
+  }
+
+  // Write unlogged dispatch payload if requested (for ephemeral runner step)
+  if (args['dispatch-out']) {
+    const dispatchPayload = {
+      recipientEmail: result.recipientEmail,
+      maskedEmail: result.maskedEmail,
+      pendingAwards: result.pendingAwards
+    };
+    fs.writeFileSync(path.resolve(args['dispatch-out']), JSON.stringify(dispatchPayload, null, 2), 'utf-8');
+  }
+
+  // If no output file specified, stream sanitized report to stdout
+  if (!args.out) {
+    process.stdout.write(JSON.stringify(sanitized, null, 2) + '\n');
   }
 }
 
@@ -240,5 +379,10 @@ if (require.main === module) {
 module.exports = {
   orchestrateAwards,
   parseArgs,
-  buildSummaryMarkdown
+  flattenPages,
+  deduplicateFiles,
+  deduplicateCommits,
+  deduplicateLabels,
+  buildSummaryMarkdown,
+  getSanitizedReport
 };
