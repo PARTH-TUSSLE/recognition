@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveIdentity, extractDcoTrailers, maskEmail, isValidEmail } = require('./identity-resolver');
+const {
+  resolveIdentity,
+  extractDcoTrailers,
+  maskEmail,
+  isValidEmail,
+  isTrailerAttributableToAuthor
+} = require('./identity-resolver');
 
 test('isValidEmail correctly enforces RFC-style structure', () => {
   // Rejections
@@ -35,6 +41,44 @@ test('extractDcoTrailers extracts and validates standard trailers', () => {
   assert.equal(trailers[0].email, 'lee@layer5.io');
 });
 
+test('isTrailerAttributableToAuthor handles direct matches and noreply requirements', () => {
+  // Direct email match
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Alice Smith', email: 'alice@example.com' },
+      { name: 'Alice Smith', email: 'alice@example.com' }
+    ),
+    true
+  );
+
+  // Noreply with matching name
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Alice Smith', email: 'alice.personal@example.com' },
+      { name: 'Alice Smith', email: '12345+alicesmith@users.noreply.github.com' }
+    ),
+    true
+  );
+
+  // Noreply with mismatched name (must fail closed; arbitrary trailers not accepted)
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Bob Jones', email: 'bob@example.com' },
+      { name: 'Alice Smith', email: '12345+alicesmith@users.noreply.github.com' }
+    ),
+    false
+  );
+
+  // Non-noreply with mismatched email and name
+  assert.equal(
+    isTrailerAttributableToAuthor(
+      { name: 'Bob Jones', email: 'bob@example.com' },
+      { name: 'Alice Smith', email: 'alice@example.com' }
+    ),
+    false
+  );
+});
+
 test('resolveIdentity: normal author + matching sign-off', () => {
   const commits = [
     {
@@ -50,6 +94,43 @@ test('resolveIdentity: normal author + matching sign-off', () => {
   const result = resolveIdentity('leecalcote', commits);
   assert.equal(result.dcoVerified, true);
   assert.equal(result.resolvedEmail, 'lee@layer5.io');
+});
+
+test('resolveIdentity: GitHub noreply commit author with matching trailer name', () => {
+  const commits = [
+    {
+      sha: 'noreply12345678',
+      author: { login: 'octocat' },
+      commit: {
+        author: { name: 'Mona Lisa Octocat', email: '12345+octocat@users.noreply.github.com' },
+        message: 'docs: web update\n\nSigned-off-by: Mona Lisa Octocat <mona@example.com>'
+      }
+    }
+  ];
+
+  const result = resolveIdentity('octocat', commits);
+  assert.equal(result.dcoVerified, true);
+  assert.equal(result.resolvedEmail, 'mona@example.com');
+});
+
+test('resolveIdentity: GitHub noreply commit author with mismatched trailer name fails closed', () => {
+  const commits = [
+    {
+      sha: 'noreplymismatch1',
+      author: { login: 'octocat' },
+      commit: {
+        author: { name: 'Mona Lisa Octocat', email: '12345+octocat@users.noreply.github.com' },
+        message: 'docs: update\n\nSigned-off-by: Impostor User <impostor@example.com>'
+      }
+    }
+  ];
+
+  const result = resolveIdentity('octocat', commits);
+  assert.equal(result.dcoVerified, false);
+  assert.equal(result.resolvedEmail, null);
+  assert.ok(result.reason.includes('has no Signed-off-by trailer attributable to author'));
+  // Ensure no plaintext email leaked in reason
+  assert.equal(result.reason.includes('impostor@example.com'), false);
 });
 
 test('resolveIdentity: maintainer sign-off + contributor sign-off on same commit', () => {
@@ -95,14 +176,15 @@ test('resolveIdentity: author signed commit plus non-author / maintainer commit 
   assert.ok(result.reason.includes('Verified 1 commit(s) by @contributor1'));
 });
 
-test('resolveIdentity: mismatched sign-off name and email on author commit (fails closed)', () => {
+test('resolveIdentity: mismatched sign-off name and email on author commit fails closed without leaking email', () => {
+  const plaintextEmail = 'secret.mismatch@corporate.com';
   const commits = [
     {
       sha: 'mismatch12345678',
       author: { login: 'alice' },
       commit: {
         author: { name: 'Alice Smith', email: 'alice@example.com' },
-        message: 'fix: bug\n\nSigned-off-by: Bob Jones <bob@other.com>'
+        message: `fix: bug\n\nSigned-off-by: Bob Jones <${plaintextEmail}>`
       }
     }
   ];
@@ -110,7 +192,9 @@ test('resolveIdentity: mismatched sign-off name and email on author commit (fail
   const result = resolveIdentity('alice', commits);
   assert.equal(result.dcoVerified, false);
   assert.equal(result.resolvedEmail, null);
-  assert.ok(result.reason.includes('does not match git commit author'));
+  assert.ok(result.reason.includes('has no Signed-off-by trailer attributable to author'));
+  // Privacy invariant: Plaintext email must NOT appear in reason
+  assert.equal(result.reason.includes(plaintextEmail), false);
 });
 
 test('resolveIdentity: commit author mismatch when no commits belong to PR author (fails closed)', () => {
@@ -177,22 +261,24 @@ test('resolveIdentity: missing DCO in one of author commits (fails closed)', () 
   assert.ok(result.reason.includes('is missing a valid DCO Signed-off-by trailer'));
 });
 
-test('resolveIdentity: multiple author commits with conflicting emails (fails closed)', () => {
+test('resolveIdentity: multiple author commits with conflicting emails (fails closed without leaking plaintext)', () => {
+  const emailA = 'work.address@test.com';
+  const emailB = 'personal.address@test.com';
   const commits = [
     {
       sha: '1111111111111111',
       author: { login: 'contributor1' },
       commit: {
-        author: { name: 'Contrib', email: 'work@test.com' },
-        message: 'first commit\n\nSigned-off-by: Contrib <work@test.com>'
+        author: { name: 'Contrib', email: emailA },
+        message: `first commit\n\nSigned-off-by: Contrib <${emailA}>`
       }
     },
     {
       sha: '2222222222222222',
       author: { login: 'contributor1' },
       commit: {
-        author: { name: 'Contrib', email: 'personal@test.com' },
-        message: 'second commit\n\nSigned-off-by: Contrib <personal@test.com>'
+        author: { name: 'Contrib', email: emailB },
+        message: `second commit\n\nSigned-off-by: Contrib <${emailB}>`
       }
     }
   ];
@@ -200,7 +286,10 @@ test('resolveIdentity: multiple author commits with conflicting emails (fails cl
   const result = resolveIdentity('contributor1', commits);
   assert.equal(result.dcoVerified, false);
   assert.equal(result.resolvedEmail, null);
-  assert.ok(result.reason.includes('conflicting Signed-off-by emails across commits'));
+  assert.ok(result.reason.includes('conflicting Signed-off-by emails'));
+  assert.equal(result.reason.includes(emailA), false);
+  assert.equal(result.reason.includes(emailB), false);
+  assert.ok(result.reason.includes(maskEmail(emailA)));
 });
 
 test('resolveIdentity: squashed commit with multiple sign-offs', () => {

@@ -14,7 +14,7 @@ function isValidEmail(email) {
 }
 
 /**
- * Masks an email address for safe public reporting in step summaries and logs.
+ * Masks an email address for safe public reporting in step summaries, logs, and diagnostics.
  * Example: "john.doe@example.com" -> "j***e@example.com"
  *
  * @param {string} email
@@ -59,18 +59,51 @@ function extractDcoTrailers(message) {
 }
 
 /**
+ * Determines whether a DCO trailer is deterministically attributable to the author of a commit.
+ *
+ * Deterministic Matching Rules:
+ * 1. Direct email match: trailer email strictly matches git commit author email.
+ * 2. Noreply with name match: if git commit author email is a GitHub noreply address,
+ *    the trailer name MUST match the git commit author's name.
+ *    (An arbitrary DCO trailer is NEVER accepted merely because the git author used a noreply email).
+ *
+ * @param {Object} trailer { name: string, email: string }
+ * @param {Object} gitAuthor { name: string, email: string }
+ * @returns {boolean}
+ */
+function isTrailerAttributableToAuthor(trailer, gitAuthor) {
+  if (!trailer || !gitAuthor) return false;
+
+  const tEmail = (trailer.email || '').trim().toLowerCase();
+  const tName = (trailer.name || '').trim().toLowerCase();
+  const gitEmail = (gitAuthor.email || '').trim().toLowerCase();
+  const gitName = (gitAuthor.name || '').trim().toLowerCase();
+
+  // Rule 1: Direct git commit author email match
+  if (gitEmail && tEmail === gitEmail) {
+    return true;
+  }
+
+  // Rule 2: GitHub noreply email requiring strict git author name match
+  const isNoreply = gitEmail.endsWith('@users.noreply.github.com') || gitEmail.includes('noreply.github.com');
+  if (isNoreply && gitName && tName === gitName) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Resolves contributor identity and strictly verifies DCO compliance against commit history.
  *
  * Attribution Contract:
  * PR Author
- * → Filter PR commits to those whose GitHub-associated author.login matches PR author
- * → DCO Signed-off-by trailer attributable to that commit author
- * → verified email
+ * → Filter PR commits strictly to those whose GitHub-associated author.login matches PR author
+ * → DCO Signed-off-by trailer deterministically attributable to that commit author
+ * → verified RFC-compliant email
  *
- * Commits authored by maintainers/other contributors in the PR do not fail attribution.
- * When no PR-author commit can be matched to a valid DCO sign-off, fails closed.
- *
- * Zero Git or network dependencies.
+ * Privacy Invariant:
+ * The returned reason string NEVER contains plaintext contributor email addresses.
  *
  * @param {string} prAuthor PR author's GitHub login handle
  * @param {Array<Object>} commits List of commit objects (from GitHub API pulls/commits)
@@ -117,8 +150,6 @@ function resolveIdentity(prAuthor, commits) {
 
     // Git commit author metadata
     const gitAuthor = item.commit && item.commit.author ? item.commit.author : {};
-    const gitAuthorEmail = (gitAuthor.email || '').trim().toLowerCase();
-    const gitAuthorName = (gitAuthor.name || '').trim().toLowerCase();
 
     // Extract DCO trailers
     const message = item.commit ? item.commit.message : (item.message || '');
@@ -132,58 +163,28 @@ function resolveIdentity(prAuthor, commits) {
       };
     }
 
-    // Attributable trailer selection
-    let attributableTrailer = null;
+    // Filter trailers to those deterministically attributable to the author
+    const attributable = trailers.filter(t => isTrailerAttributableToAuthor(t, gitAuthor));
 
-    if (trailers.length === 1) {
-      const single = trailers[0];
-      // Verify single trailer isn't an arbitrary mismatched third-party
-      const emailMatches = gitAuthorEmail && single.email === gitAuthorEmail;
-      const nameMatches = gitAuthorName && single.name.toLowerCase() === gitAuthorName;
-      const isNoreply = gitAuthorEmail.includes('noreply.github.com');
-
-      if (emailMatches || nameMatches || isNoreply) {
-        attributableTrailer = single;
-      } else {
-        // Name and email both mismatch git author
-        return {
-          resolvedEmail: null,
-          dcoVerified: false,
-          reason: `Commit ${sha} Signed-off-by trailer '${single.email}' does not match git commit author '${gitAuthorEmail || gitAuthorName}'`
-        };
-      }
-    } else {
-      // Multiple trailers: find trailer matching the author's git email or name
-      const matchingTrailers = trailers.filter(t => {
-        if (gitAuthorEmail && t.email === gitAuthorEmail) return true;
-        if (gitAuthorName && t.name.toLowerCase() === gitAuthorName) return true;
-        return false;
-      });
-
-      if (matchingTrailers.length === 1) {
-        attributableTrailer = matchingTrailers[0];
-      } else if (matchingTrailers.length === 0) {
-        return {
-          resolvedEmail: null,
-          dcoVerified: false,
-          reason: `Commit ${sha} has multiple Signed-off-by trailers but none match commit author '${gitAuthorEmail || gitAuthorName}'`
-        };
-      } else {
-        // Multiple trailers claim to match author; check if they share the exact same email
-        const distinctEmails = [...new Set(matchingTrailers.map(t => t.email))];
-        if (distinctEmails.length === 1) {
-          attributableTrailer = matchingTrailers[0];
-        } else {
-          return {
-            resolvedEmail: null,
-            dcoVerified: false,
-            reason: `Commit ${sha} has conflicting Signed-off-by trailers for author '${gitAuthorName}'`
-          };
-        }
-      }
+    if (attributable.length === 0) {
+      return {
+        resolvedEmail: null,
+        dcoVerified: false,
+        reason: `Commit ${sha} by @${prAuthor} has no Signed-off-by trailer attributable to author`
+      };
     }
 
-    commitEmails.push(attributableTrailer.email);
+    // Check if multiple attributable trailers share the same email
+    const distinctCommitEmails = [...new Set(attributable.map(t => t.email))];
+    if (distinctCommitEmails.length > 1) {
+      return {
+        resolvedEmail: null,
+        dcoVerified: false,
+        reason: `Commit ${sha} by @${prAuthor} has conflicting Signed-off-by trailers`
+      };
+    }
+
+    commitEmails.push(distinctCommitEmails[0]);
   }
 
   // Verify email consistency across all PR-author commits
@@ -192,7 +193,7 @@ function resolveIdentity(prAuthor, commits) {
     return {
       resolvedEmail: null,
       dcoVerified: false,
-      reason: `PR contains conflicting Signed-off-by emails across commits (${distinctEmails.map(maskEmail).join(', ')})`
+      reason: `PR contains conflicting Signed-off-by emails across author commits (${distinctEmails.map(maskEmail).join(', ')})`
     };
   }
 
@@ -208,5 +209,6 @@ module.exports = {
   isValidEmail,
   maskEmail,
   extractDcoTrailers,
+  isTrailerAttributableToAuthor,
   resolveIdentity
 };

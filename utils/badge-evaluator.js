@@ -1,6 +1,29 @@
 const defaultRules = require('./badge-rules.json');
 
 /**
+ * Authoritative allowlist of participating Track 2 ecosystem repositories.
+ */
+const SUPPORTED_REPOSITORIES = Object.freeze([
+  'layer5io/sistent',
+  'meshery/meshery',
+  'meshery/meshery-operator',
+  'meshery/meshsync',
+  'layer5io/docs',
+  'meshery/meshery.io',
+  'layer5io/layer5'
+]);
+
+/**
+ * Validates whether a repository name is an authorized Track 2 participating repository.
+ * @param {string} repository
+ * @returns {boolean}
+ */
+function isSupportedRepository(repository) {
+  if (!repository || typeof repository !== 'string') return false;
+  return SUPPORTED_REPOSITORIES.includes(repository.trim().toLowerCase());
+}
+
+/**
  * Matches a glob pattern against a normalized relative file path.
  * Supports:
  * - `**` : arbitrary directories / subdirectories
@@ -85,7 +108,7 @@ function normalizeFiles(files) {
 
 /**
  * Evaluates a pull request's metadata against badge rules.
- * Pure function: (repo, labels, changedFiles, rules) -> { eligibleBadges: [ { slug, name, reason, ruleId } ] }
+ * Pure function: (repo, labels, changedFiles, rules) -> { eligibleBadges: [ { slug, name, reason, ruleId } ], isSupportedRepo: boolean }
  * Zero Git or network dependencies.
  *
  * @param {Object} prContext
@@ -93,7 +116,7 @@ function normalizeFiles(files) {
  * @param {Array<string|{name: string}>} [prContext.labels] PR labels
  * @param {Array<string|{filename: string}>} [prContext.changedFiles] List of changed files
  * @param {Array} [rules] Optional badge rules override
- * @returns {{ eligibleBadges: Array<{ slug: string, name: string, reason: string, ruleId: string }> }}
+ * @returns {{ eligibleBadges: Array<{ slug: string, name: string, reason: string, ruleId: string }>, isSupportedRepo: boolean }}
  */
 function evaluateBadges(prContext = {}, rules = defaultRules) {
   const repository = (prContext.repository || prContext.repo || '').trim().toLowerCase();
@@ -101,7 +124,12 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
   const rawFiles = normalizeFiles(prContext.changedFiles || prContext.files);
 
   if (!repository) {
-    return { eligibleBadges: [] };
+    return { eligibleBadges: [], isSupportedRepo: false };
+  }
+
+  const isSupported = isSupportedRepository(repository);
+  if (!isSupported) {
+    return { eligibleBadges: [], isSupportedRepo: false };
   }
 
   const eligibleBadges = [];
@@ -160,10 +188,12 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
     }
   }
 
-  return { eligibleBadges };
+  return { eligibleBadges, isSupportedRepo: true };
 }
 
 module.exports = {
+  SUPPORTED_REPOSITORIES,
+  isSupportedRepository,
   evaluateBadges,
   matchGlob,
   normalizeLabels,
