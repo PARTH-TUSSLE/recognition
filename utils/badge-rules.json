@@ -1,0 +1,177 @@
+[
+  {
+    "slug": "sistent-contributor",
+    "name": "Sistent Contributor",
+    "ruleId": "rule-sistent-contributor",
+    "description": "Consistent & impactful contributions to Sistent",
+    "repositories": ["layer5io/sistent"],
+    "includePatterns": [
+      "src/**",
+      "packages/**",
+      "system/**"
+    ],
+    "excludePatterns": [
+      ".github/**",
+      ".gitignore",
+      "LICENSE",
+      "CODE_OF_CONDUCT.md"
+    ]
+  },
+  {
+    "slug": "meshery",
+    "name": "Meshery",
+    "ruleId": "rule-meshery-core",
+    "description": "Consistent & impactful contributions to Meshery core",
+    "repositories": ["meshery/meshery"],
+    "includePatterns": [
+      "server/**",
+      "mesheryctl/**",
+      "models/**",
+      "install/**",
+      "main.go"
+    ],
+    "excludePatterns": [
+      "docs/**",
+      "README.md",
+      "ROADMAP.md",
+      ".github/**"
+    ]
+  },
+  {
+    "slug": "meshery-operator",
+    "name": "Meshery Operator",
+    "ruleId": "rule-meshery-operator",
+    "description": "Contributions to Meshery Operator",
+    "repositories": ["meshery/meshery-operator"],
+    "includePatterns": [
+      "controllers/**",
+      "api/**",
+      "pkg/**",
+      "main.go"
+    ],
+    "excludePatterns": [
+      ".github/**",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "meshsync",
+    "name": "MeshSync",
+    "ruleId": "rule-meshsync",
+    "description": "Contributions to MeshSync",
+    "repositories": ["meshery/meshsync"],
+    "includePatterns": [
+      "internal/**",
+      "pkg/**",
+      "main.go"
+    ],
+    "excludePatterns": [
+      ".github/**",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "meshery-docs",
+    "name": "Meshery Docs",
+    "ruleId": "rule-meshery-docs",
+    "description": "Contributions to documentation",
+    "repositories": [
+      "meshery/meshery",
+      "layer5io/docs"
+    ],
+    "repoSpecificIncludePatterns": {
+      "meshery/meshery": [
+        "docs/**"
+      ],
+      "layer5io/docs": [
+        "content/**",
+        "pages/**"
+      ]
+    },
+    "excludePatterns": [
+      ".github/**",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "meshery-catalog",
+    "name": "Meshery Catalog",
+    "ruleId": "rule-meshery-catalog",
+    "description": "Contributions to Meshery Catalog",
+    "repositories": [
+      "meshery/meshery.io",
+      "meshery/meshery"
+    ],
+    "repoSpecificIncludePatterns": {
+      "meshery/meshery.io": [
+        "catalog/**",
+        "collections/catalog/**"
+      ],
+      "meshery/meshery": [
+        "models/**"
+      ]
+    },
+    "excludePatterns": [
+      ".github/**",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "landscape",
+    "name": "Landscape",
+    "ruleId": "rule-landscape",
+    "description": "Contributions to Layer5 Landscape",
+    "repositories": ["layer5io/layer5"],
+    "includePatterns": [
+      "src/collections/landscape/**"
+    ],
+    "excludePatterns": [
+      "src/collections/blog/**",
+      "src/collections/news/**",
+      "src/collections/members/**",
+      ".github/**",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  {
+    "slug": "ui-ux",
+    "name": "UI/UX",
+    "ruleId": "rule-ui-ux",
+    "description": "Creating/improving visual designs or user flows",
+    "repositories": [
+      "meshery/meshery",
+      "layer5io/sistent",
+      "layer5io/layer5"
+    ],
+    "requiredAnyLabels": [
+      "area/ui",
+      "area/ux"
+    ],
+    "repoSpecificIncludePatterns": {
+      "meshery/meshery": [
+        "ui/**",
+        "provider-ui/**"
+      ],
+      "layer5io/sistent": [
+        "src/**",
+        "system/**"
+      ],
+      "layer5io/layer5": [
+        "src/components/**",
+        "src/sections/**"
+      ]
+    },
+    "excludePatterns": [
+      "**/__tests__/**",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "package-lock.json",
+      "yarn.lock"
+    ]
+  }
+]
