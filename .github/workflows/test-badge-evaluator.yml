@@ -15,7 +15,6 @@ on:
 permissions:
   contents: read
   issues: read
-  pull-requests: read
 
 jobs:
   test-evaluation:
@@ -35,9 +34,9 @@ jobs:
           echo "Evaluating PR #${PR_NUMBER} from external repository: ${TARGET_REPO}..."
 
           gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json
-          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/files" --paginate > .pr-files.json
-          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/commits" --paginate > .pr-commits.json
-          gh api "repos/${TARGET_REPO}/issues/${PR_NUMBER}/labels" --paginate > .existing-labels.json
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/files" --paginate --slurp | jq 'add // []' > .pr-files.json
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/commits" --paginate --slurp | jq 'add // []' > .pr-commits.json
+          gh api "repos/${TARGET_REPO}/issues/${PR_NUMBER}/labels" --paginate --slurp | jq 'add // []' > .existing-labels.json
 
           node -e '
           const fs = require("fs");
@@ -66,7 +65,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, res.summaryMarkdown + "\n");
           '
 
-      - name: Print dry-run evaluation report
+      - name: Print sanitized dry-run report
         run: |
-          echo "=== DRY RUN EVALUATION OUTPUT ==="
+          echo "=== SANITIZED DRY-RUN EVALUATION REPORT ==="
           cat .evaluation-result.json | jq .

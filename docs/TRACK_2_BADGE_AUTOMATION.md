@@ -14,14 +14,14 @@ Track 2 automates immediate contributor recognition for merged Pull Requests acr
 
 | Badge Slug | Official Title | Scope & Target Repositories | Heuristic & Qualifying Files | False-Positive Exclusion Guards |
 | :--- | :--- | :--- | :--- | :--- |
-| `sistent-contributor` | **Sistent Contributor** | `layer5io/sistent` | Modifies `src/**`, `packages/**`, `system/**` | Excludes root non-code metadata (`.github/**`, `.gitignore`, `LICENSE`, `CODE_OF_CONDUCT.md`). |
-| `meshery` | **Meshery** | `meshery/meshery` | Modifies core functional codebase (`server/**`, `mesheryctl/**`, `models/**`, `install/**`, `main.go`) | Excludes PRs modifying only `docs/**` (earns `meshery-docs`), root markdown (`README.md`, `ROADMAP.md`), or `.github/**`. |
-| `meshery-operator` | **Meshery Operator** | `meshery/meshery-operator` | Modifies operator controllers/APIs (`controllers/**`, `api/**`, `pkg/**`, `main.go`) | Excludes root non-code metadata (`.github/**`, `LICENSE`, `README.md`). |
-| `meshsync` | **MeshSync** | `meshery/meshsync` | Modifies MeshSync daemon logic (`internal/**`, `pkg/**`, `main.go`) | Excludes root non-code metadata (`.github/**`, `LICENSE`, `README.md`). |
-| `meshery-docs` | **Meshery Docs** | `meshery/meshery`, `layer5io/docs` | Modifies documentation paths (`docs/**` in Meshery, `content/**`, `pages/**` in Layer5 Docs) | Generic `**/*.md` is forbidden; strictly scoped to verified documentation trees. |
-| `meshery-catalog` | **Meshery Catalog** | `meshery/meshery.io`, `meshery/meshery` | Modifies catalog items (`catalog/**`, `collections/catalog/**` in Meshery.io, `models/**` in Meshery) | Excludes non-catalog site assets and generic docs. |
-| `landscape` | **Landscape** | `layer5io/layer5` | Modifies landscape data (`src/collections/landscape/**`) | Strictly scoped to landscape collection. Excludes blog, news, and member collections. |
-| `ui-ux` | **UI/UX** | `meshery/meshery`, `layer5io/sistent`, `layer5io/layer5` | Requires label `area/ui` or `area/ux` AND modifications in frontend components (`ui/**`, `src/**`, `src/components/**`, `src/sections/**`) | Excludes unit tests (`**/*.test.*`, `**/__tests__/**`), lockfiles, and non-frontend packages. |
+| `sistent-contributor` | **Sistent Contributor** | `layer5io/sistent` | Modifies `src/**`, `packages/**`, `system/**`, `examples/**`, `scripts/**`, or build targets (`package.json`, `tsconfig.json`, `Makefile`). | Excludes non-code metadata (`.github/**`, `.gitignore`, `LICENSE`, `CODE_OF_CONDUCT.md`, `README.md`, `CONTRIBUTING*.md`, `MAINTAINERS.md`). |
+| `meshery` | **Meshery** | `meshery/meshery` | Modifies core functional codebase (`server/**`, `mesheryctl/**`, `models/**`, `install/**`, `ui/**`, `provider-ui/**`, `main.go`, `Makefile`, `go.mod`, `go.sum`). | Excludes PRs modifying only documentation (`docs/**` earns `meshery-docs`), root markdown/governance (`README.md`, `ROADMAP.md`, `ADOPTERS.md`, `GOVERNANCE.md`, `VISION*.md`, `CONTRIBUTING*.md`), or `.github/**`. |
+| `meshery-operator` | **Meshery Operator** | `meshery/meshery-operator` | Modifies operator controllers/APIs (`controllers/**`, `api/**`, `pkg/**`, `bundle/**`, `config/**`, `main.go`, `Makefile`, `go.mod`, `go.sum`). | Excludes root non-code metadata (`.github/**`, `LICENSE`, `README.md`, `CODE_OF_CONDUCT.md`). |
+| `meshsync` | **MeshSync** | `meshery/meshsync` | Modifies MeshSync daemon logic (`internal/**`, `pkg/**`, `plugins/**`, `cache/**`, `main.go`, `Makefile`, `go.mod`, `go.sum`). | Excludes root non-code metadata (`.github/**`, `LICENSE`, `README.md`, `CODE_OF_CONDUCT.md`). |
+| `meshery-docs` | **Meshery Docs** | `meshery/meshery`, `layer5io/docs` | Modifies documentation paths (`docs/**` in Meshery, `content/**`, `pages/**` in Layer5 Docs). | Generic `**/*.md` is forbidden; strictly scoped to verified documentation trees. |
+| `meshery-catalog` | **Meshery Catalog** | `meshery/meshery.io`, `meshery/meshery` | Modifies catalog items (`catalog/**`, `collections/catalog/**` in Meshery.io, `models/**` in Meshery). | Excludes non-catalog site assets and generic docs. |
+| `landscape` | **Landscape** | `layer5io/layer5` | Modifies landscape data (`src/collections/landscape/**`). | Strictly scoped to landscape collection. Excludes blog, news, and member collections. |
+| `ui-ux` | **UI/UX** | `meshery/meshery`, `layer5io/sistent`, `layer5io/layer5` | Requires label `area/ui` or `area/ux` AND modifications in frontend components (`ui/**`, `provider-ui/**`, `src/**`, `system/**`, `examples/**`, `src/components/**`, `src/sections/**`, `src/templates/**`, `src/pages/**`). | Excludes unit tests (`**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`), lockfiles, and non-frontend packages. |
 
 ---
 
@@ -36,24 +36,29 @@ flowchart TD
 
     subgraph CentralEngine["layer5io/recognition (Reusable Execution)"]
         ReusableCall --> SparseCheckout["Sparse Checkout utils/ from job.workflow_repository@job.workflow_sha"]
-        SparseCheckout --> CollectMeta["Collect PR files, commits & labels via gh api"]
+        SparseCheckout --> CollectMeta["Collect PR files, commits & labels via gh api --slurp | jq add"]
         CollectMeta --> Evaluator["badge-evaluator.js & identity-resolver.js"]
         Evaluator --> FilterExisting{"Filter out existing badge-awarded:&lt;slug&gt;"}
         FilterExisting -- Unawarded --> SlackDispatch["POST /award-badge to Slack channel #recognition"]
         SlackDispatch --> LabelPR["Race-Safe Label: badge-awarded:&lt;slug&gt;"]
-        LabelPR --> StepSummary["Write Summary to GITHUB_STEP_SUMMARY"]
+        LabelPR --> StepSummary["Write Sanitized Summary to GITHUB_STEP_SUMMARY"]
         FilterExisting -- Already Awarded --> StepSummary
     end
 ```
 
-### Zero Untrusted Code Execution
-
-1. **Privileged Base Context**: The caller workflow triggers on `pull_request_target: types: [closed]` with `github.event.pull_request.merged == true`. It runs strictly within the base repository's context.
-2. **Zero Fork Checkout**: Pull request fork code is **never** checked out on the runner.
-3. **Immutable Trusted Engine Checkout**: The runner checks out only the trusted evaluation engine from `layer5io/recognition` at the exact immutable commit SHA of the workflow using GitHub's native job context:
+### Zero Untrusted Code Execution & Permissions
+1. **Privileged Base Context**: Caller workflows execute via `pull_request_target: types: [closed]` where `github.event.pull_request.merged == true`. Fork PR code is **never** checked out.
+2. **Minimal Permissions**: The workflow operates strictly with:
+   ```yaml
+   permissions:
+     contents: read
+     issues: write
+   ```
+   PR labels are manipulated exclusively via the GitHub Issues API (`/repos/{owner}/{repo}/issues/{number}/labels`). No write access to pull-requests or code contents is granted.
+3. **Strict Trusted Engine Checkout**: The runner checks out code using the immutable job context:
    ```yaml
    - name: Checkout trusted recognition engine
-     uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+     uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 pinned SHA
      with:
        repository: ${{ job.workflow_repository }}
        ref: ${{ job.workflow_sha }}
@@ -61,70 +66,78 @@ flowchart TD
        sparse-checkout: |
          utils
    ```
-4. **Explicit Caller Targeting**: All GitHub API and CLI operations explicitly target `TARGET_REPO="${{ github.repository }}"` and `PR_NUMBER="${{ inputs.pr_number }}"`.
+   There are no silent fallbacks to other branches or repositories; if the reusable workflow context is unavailable, execution fails closed.
+4. **Trusted Slack Channel**: Award commands are dispatched strictly to the canonical recognition channel (`CLDRKJZ0T`). Callers cannot redirect tokens to arbitrary channels.
+5. **Caller Targeting**: All GitHub API and CLI operations explicitly target `TARGET_REPO="${{ github.repository }}"` and `PR_NUMBER="${{ inputs.pr_number }}"`.
 
 ---
 
-## 3. Concurrency, Idempotency & Error Handling
+## 3. Privacy & Email Sanitization
 
-### 3.1 Per-PR Concurrency Lock
-To prevent duplicate awards or overlapping dispatches from rapid events or manual workflow reruns:
+Contributor emails are treated as sensitive data:
+- **Zero Plaintext Email Logging**: Plaintext email addresses are **never** printed to runner stdout, console logs, error messages, or `$GITHUB_STEP_SUMMARY`.
+- **Masked Identity Display**: Public reports and Step Summaries display only obfuscated emails (e.g. `c***b@layer5.io`) or GitHub handles (`@contributor`).
+- **Ephemeral Dispatch Isolation**: The plaintext email is passed only into the ephemeral dispatch environment strictly to construct the Slack API payload, after which the dispatch file is immediately wiped.
+
+---
+
+## 4. Concurrency, Idempotency & Retry Model
+
+### 4.1 Per-PR Concurrency Guard
 ```yaml
 concurrency:
   group: badge-award-${{ github.repository }}-${{ inputs.pr_number }}
   cancel-in-progress: false
 ```
-`cancel-in-progress: false` ensures that any in-flight award dispatch completes its sequential award-and-label cycle cleanly before another run begins.
+`cancel-in-progress: false` ensures that any active execution completes its award-and-label cycle before another run begins.
 
-### 3.2 Race-Safe Label Creation
-Before applying a tracking label (`badge-awarded:<slug>`), the engine verifies if it exists on the caller repository. If missing, it calls `POST /repos/${TARGET_REPO}/labels` and handles the response:
-- **`201 Created`**: Success; proceeds to apply.
-- **`422 Validation Failed`**: Inspects response body. If and only if the error payload contains `code: "already_exists"` (e.g. created concurrently by a parallel run), it treats it as success.
-- **All Other HTTP Codes (`401/403/404/5xx`)**: Fails immediately as a fatal error.
-
-### 3.3 Two-Step Sequential Award
-For each pending unawarded badge, the workflow executes sequentially:
-$$\text{1. Slack Dispatch } (/award-badge) \longrightarrow \text{2. GitHub Tracking Label Write } (badge-awarded:<slug>)$$
-
-- **Pre-Dispatch Filter**: Badges already possessing `badge-awarded:<slug>` on the PR are filtered out before dispatch.
-- **Partial Failure Recovery**: If badge 1 dispatches and is labeled, but badge 2 fails, a rerun safely skips badge 1 (its label exists) and dispatches only badge 2.
-
----
-
-## 4. Contributor Attribution & DCO Verification
-
-`utils/identity-resolver.js` verifies:
-1. **GitHub Author Verification**: Commit `author.login` matches the PR author login.
-2. **DCO Compliance**: All author commits must contain a valid `Signed-off-by: Name <email>` trailer.
-3. **Safe Obfuscation**: Contributor emails are masked (`u***r@domain.com`) in all logs and `$GITHUB_STEP_SUMMARY` to protect contributor privacy.
+### 4.2 Idempotency Semantics & Partial Recovery
+The system implements **concurrency protection + per-badge tracking + at-least-once external dispatch**:
+- Awarding executes sequentially per badge:
+  $$\text{1. Slack Dispatch } (/award-badge) \longrightarrow \text{2. GitHub Tracking Label Write } (badge-awarded:<slug>)$$
+- If badge 1 is awarded and labeled, but badge 2 fails during dispatch:
+  - The workflow run fails.
+  - Upon rerun, badge 1 is skipped (its label exists), and only badge 2 is dispatched.
+- **Race-Safe Labeling**: Calling `POST /repos/${TARGET_REPO}/labels` inspects HTTP responses:
+  - `201 Created`: Success.
+  - `422 Validation Failed`: If and only if `code: "already_exists"`, it is treated as success.
+  - Any other error (401/403/5xx): Fails fatally.
 
 ---
 
-## 5. Local Development & Testing
+## 5. Contributor Attribution & DCO Verification
+
+Attribution strictly requires:
+```text
+PR author
+→ GitHub-associated commit author matching PR author (strictly commit.author.login === prAuthor)
+→ DCO Signed-off-by trailer attributable to that commit author
+→ verified RFC-compliant email
+```
+- No fallback to `committer.login`.
+- If multiple `Signed-off-by` trailers exist (e.g. contributor + maintainer), the trailer matching the commit author's git email/name is selected.
+- All commits by the author in the PR must resolve to the same verified email. Any ambiguity fails closed.
+
+---
+
+## 6. Local Development & Testing
 
 ### Running Unit Tests
-All core modules have zero external dependencies and use Node.js's native test runner:
-
 ```bash
-# Run all engine unit tests
 npm run test:badge-engine
-
-# Or run individual test suites
-node --test utils/badge-evaluator.test.js
-node --test utils/identity-resolver.test.js
-node --test utils/award-orchestrator.test.js
+# Or directly via Node.js native test runner
+node --test utils/*.test.js
 ```
 
 ### Dry-Run Testing of Historical PRs
-Maintainers can test any historical PR across any ecosystem repository using `.github/workflows/test-badge-evaluator.yml`:
-1. Navigate to **Actions** $\rightarrow$ **Test Badge Evaluator (Dry-Run)** in `layer5io/recognition`.
-2. Click **Run workflow**.
-3. Enter the `repository` (e.g., `layer5io/sistent` or `meshery/meshery`) and `pr_number`.
-4. Inspect the generated Step Summary and evaluation report. No live Slack commands or GitHub labels will be issued.
+Maintainers can safely evaluate historical PRs using `.github/workflows/test-badge-evaluator.yml`:
+1. Open **Actions** $\rightarrow$ **Test Badge Evaluator (Dry-Run)** in `layer5io/recognition`.
+2. Enter the target `repository` (e.g. `layer5io/sistent` or `meshery/meshery`) and `pr_number`.
+3. Review the sanitized Step Summary and console output.
 
 ---
 
-## 6. Onboarding Caller Repositories (Phases 2 & 3)
+## 7. Onboarding Caller Repositories (Phases 2 & 3)
 
 To onboard a repository (e.g. `layer5io/sistent`), add `.github/workflows/award-contributor-badge.yml`:
 
@@ -138,7 +151,6 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: write
 
 jobs:
   award:

@@ -21,19 +21,27 @@ test('matchGlob utility handles patterns accurately', () => {
   assert.equal(matchGlob('**/__tests__/**', 'src/__tests__/app.test.js'), true);
 });
 
-test('sistent-contributor badge evaluation', () => {
-  // Qualifying files
-  const qualifying = evaluateBadges({
+test('sistent-contributor badge evaluation: positive & negative paths', () => {
+  // Qualifying files in src
+  const srcResult = evaluateBadges({
     repository: 'layer5io/sistent',
     changedFiles: ['src/components/button.tsx', 'package.json']
   });
-  assert.equal(qualifying.eligibleBadges.length, 1);
-  assert.equal(qualifying.eligibleBadges[0].slug, 'sistent-contributor');
+  assert.equal(srcResult.eligibleBadges.length, 1);
+  assert.equal(srcResult.eligibleBadges[0].slug, 'sistent-contributor');
+
+  // Qualifying files in examples (prevents false negative for demo contributors)
+  const exampleResult = evaluateBadges({
+    repository: 'layer5io/sistent',
+    changedFiles: ['examples/nextjs-sample/pages/index.tsx']
+  });
+  assert.equal(exampleResult.eligibleBadges.length, 1);
+  assert.equal(exampleResult.eligibleBadges[0].slug, 'sistent-contributor');
 
   // Disqualifying root metadata / non-code
   const disqualified = evaluateBadges({
     repository: 'layer5io/sistent',
-    changedFiles: ['.github/workflows/ci.yml', '.gitignore', 'LICENSE', 'CODE_OF_CONDUCT.md']
+    changedFiles: ['.github/workflows/ci.yml', '.gitignore', 'LICENSE', 'CODE_OF_CONDUCT.md', 'README.md', 'CONTRIBUTING.md']
   });
   assert.equal(disqualified.eligibleBadges.length, 0);
 
@@ -47,7 +55,7 @@ test('sistent-contributor badge evaluation', () => {
 });
 
 test('meshery core vs meshery-docs evaluation in meshery/meshery', () => {
-  // Core functional code modification
+  // Core functional backend code modification
   const coreResult = evaluateBadges({
     repository: 'meshery/meshery',
     changedFiles: ['server/handlers/patterns.go', 'mesheryctl/cmd/system.go']
@@ -55,6 +63,14 @@ test('meshery core vs meshery-docs evaluation in meshery/meshery', () => {
   const coreSlugs = coreResult.eligibleBadges.map(b => b.slug);
   assert.ok(coreSlugs.includes('meshery'));
   assert.ok(!coreSlugs.includes('meshery-docs'));
+
+  // Core functional frontend UI modification (prevents false negative for UI contributors)
+  const uiResult = evaluateBadges({
+    repository: 'meshery/meshery',
+    changedFiles: ['ui/components/Navigator.tsx']
+  });
+  const uiSlugs = uiResult.eligibleBadges.map(b => b.slug);
+  assert.ok(uiSlugs.includes('meshery'), 'UI contributors must earn meshery core badge');
 
   // Documentation-only modification
   const docsResult = evaluateBadges({
@@ -65,10 +81,10 @@ test('meshery core vs meshery-docs evaluation in meshery/meshery', () => {
   assert.ok(!docsSlugs.includes('meshery'), 'Docs-only PR must not earn meshery core badge');
   assert.ok(docsSlugs.includes('meshery-docs'), 'Must earn meshery-docs badge');
 
-  // Root markdown & CI exclusions
+  // Root markdown & governance exclusions
   const metaResult = evaluateBadges({
     repository: 'meshery/meshery',
-    changedFiles: ['README.md', 'ROADMAP.md', '.github/workflows/test.yml']
+    changedFiles: ['README.md', 'ROADMAP.md', 'ADOPTERS.md', 'GOVERNANCE.md', '.github/workflows/test.yml']
   });
   assert.equal(metaResult.eligibleBadges.length, 0);
 
@@ -82,7 +98,7 @@ test('meshery core vs meshery-docs evaluation in meshery/meshery', () => {
   assert.ok(mixedSlugs.includes('meshery-docs'));
 });
 
-test('meshery-operator and meshsync badge evaluation', () => {
+test('meshery-operator and meshsync badge evaluation: positive & negative paths', () => {
   // Operator controller modification
   const opResult = evaluateBadges({
     repository: 'meshery/meshery-operator',
@@ -91,10 +107,18 @@ test('meshery-operator and meshsync badge evaluation', () => {
   assert.equal(opResult.eligibleBadges.length, 1);
   assert.equal(opResult.eligibleBadges[0].slug, 'meshery-operator');
 
-  // MeshSync internal logic modification
+  // Operator bundle/manifest modification
+  const opBundle = evaluateBadges({
+    repository: 'meshery/meshery-operator',
+    changedFiles: ['bundle/manifests/meshery.clusterserviceversion.yaml']
+  });
+  assert.equal(opBundle.eligibleBadges.length, 1);
+  assert.equal(opBundle.eligibleBadges[0].slug, 'meshery-operator');
+
+  // MeshSync internal and plugin logic modification
   const syncResult = evaluateBadges({
     repository: 'meshery/meshsync',
-    changedFiles: ['internal/daemon/sync.go', 'pkg/broker/client.go']
+    changedFiles: ['internal/daemon/sync.go', 'plugins/discovery.go']
   });
   assert.equal(syncResult.eligibleBadges.length, 1);
   assert.equal(syncResult.eligibleBadges[0].slug, 'meshsync');
@@ -102,7 +126,7 @@ test('meshery-operator and meshsync badge evaluation', () => {
   // Operator non-code metadata excluded
   const opMeta = evaluateBadges({
     repository: 'meshery/meshery-operator',
-    changedFiles: ['README.md', 'LICENSE', '.github/workflows/ci.yml']
+    changedFiles: ['README.md', 'LICENSE', '.github/workflows/ci.yml', 'CODE_OF_CONDUCT.md']
   });
   assert.equal(opMeta.eligibleBadges.length, 0);
 });
