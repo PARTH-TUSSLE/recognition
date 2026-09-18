@@ -53,6 +53,7 @@ test('Integration: full pipeline with paginated API responses, multi-badge award
   const prMetadata = {
     repository: 'layer5io/sistent',
     prAuthor: 'contributor1',
+    merged: true,
     files: filesSlurped,
     commits: commitsSlurped,
     labels: labelsSlurped
@@ -128,6 +129,7 @@ test('Integration: missing DCO blocks award dispatch in pipeline', () => {
   const prMetadata = {
     repository: 'meshery/meshery',
     prAuthor: 'author1',
+    merged: true,
     files: [{ filename: 'server/main.go' }],
     commits: [
       {
@@ -166,6 +168,100 @@ test('Integration: missing DCO blocks award dispatch in pipeline', () => {
 
   const dispatchJson = JSON.parse(fs.readFileSync(dispatchOutPath, 'utf-8'));
   assert.equal(dispatchJson.pendingAwards.length, 0);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Integration: unmerged PR safely blocks badge evaluation and award dispatches', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-unmerged-'));
+
+  const prMetadata = {
+    repository: 'layer5io/sistent',
+    prAuthor: 'contributor1',
+    merged: false, // Unmerged PR
+    files: [{ filename: 'src/components/Button/index.tsx' }],
+    commits: [
+      {
+        sha: 'unmerged1234',
+        author: { login: 'contributor1' },
+        commit: {
+          author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+          message: 'feat: add button\n\nSigned-off-by: Contributor One <contrib@layer5.io>'
+        }
+      }
+    ],
+    labels: []
+  };
+
+  const metadataPath = path.join(tmpDir, 'pr-metadata.json');
+  const labelsPath = path.join(tmpDir, 'existing-labels.json');
+  const publicOutPath = path.join(tmpDir, 'evaluation-result.json');
+  const dispatchOutPath = path.join(tmpDir, 'dispatch-context.json');
+
+  fs.writeFileSync(metadataPath, JSON.stringify(prMetadata), 'utf-8');
+  fs.writeFileSync(labelsPath, JSON.stringify([]), 'utf-8');
+
+  const scriptPath = path.resolve(__dirname, 'award-orchestrator.js');
+  execFileSync(process.execPath, [
+    scriptPath,
+    `--metadata=${metadataPath}`,
+    `--existing-labels=${labelsPath}`,
+    `--repo=layer5io/sistent`,
+    `--out=${publicOutPath}`,
+    `--dispatch-out=${dispatchOutPath}`
+  ]);
+
+  const publicJson = JSON.parse(fs.readFileSync(publicOutPath, 'utf-8'));
+  assert.equal(publicJson.isMerged, false);
+  assert.equal(publicJson.pendingAwards.length, 0);
+  assert.ok(publicJson.summaryMarkdown.includes('not in a merged state'));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Integration: unauthorized repository fails closed and produces no awards', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-unauthorized-'));
+
+  const prMetadata = {
+    repository: 'external-org/unknown-repo',
+    prAuthor: 'contributor1',
+    merged: true,
+    files: [{ filename: 'src/index.ts' }],
+    commits: [
+      {
+        sha: 'unauth1234',
+        author: { login: 'contributor1' },
+        commit: {
+          author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+          message: 'feat: code\n\nSigned-off-by: Contributor One <contrib@layer5.io>'
+        }
+      }
+    ],
+    labels: []
+  };
+
+  const metadataPath = path.join(tmpDir, 'pr-metadata.json');
+  const labelsPath = path.join(tmpDir, 'existing-labels.json');
+  const publicOutPath = path.join(tmpDir, 'evaluation-result.json');
+  const dispatchOutPath = path.join(tmpDir, 'dispatch-context.json');
+
+  fs.writeFileSync(metadataPath, JSON.stringify(prMetadata), 'utf-8');
+  fs.writeFileSync(labelsPath, JSON.stringify([]), 'utf-8');
+
+  const scriptPath = path.resolve(__dirname, 'award-orchestrator.js');
+  execFileSync(process.execPath, [
+    scriptPath,
+    `--metadata=${metadataPath}`,
+    `--existing-labels=${labelsPath}`,
+    `--repo=external-org/unknown-repo`,
+    `--out=${publicOutPath}`,
+    `--dispatch-out=${dispatchOutPath}`
+  ]);
+
+  const publicJson = JSON.parse(fs.readFileSync(publicOutPath, 'utf-8'));
+  assert.equal(publicJson.isSupportedRepo, false);
+  assert.equal(publicJson.pendingAwards.length, 0);
+  assert.ok(publicJson.summaryMarkdown.includes('not an authorized Track 2 participating repository'));
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });

@@ -47,8 +47,9 @@ flowchart TD
 ```
 
 ### Zero Untrusted Code Execution & Permissions
-1. **Privileged Base Context**: Caller workflows execute via `pull_request_target: types: [closed]` where `github.event.pull_request.merged == true`. Fork PR code is **never** checked out.
-2. **Minimal Permissions**: The workflow operates strictly with:
+1. **Privileged Base Context & Defense-in-Depth**: Caller workflows execute via `pull_request_target: types: [closed]` where `github.event.pull_request.merged == true`. Fork PR code is **never** checked out. As defense-in-depth, the reusable workflow independently queries the GitHub API to verify the PR exists and is actually merged before evaluating badges or dispatching awards.
+2. **Authorized Repository Allowlist**: The reusable workflow validates that the calling repository is an authorized Track 2 participating repository (`layer5io/sistent`, `meshery/meshery`, `meshery/meshery-operator`, `meshery/meshsync`, `layer5io/docs`, `meshery/meshery.io`, `layer5io/layer5`). Unlisted repositories fail closed.
+3. **Minimal Permissions**: The workflow operates strictly with:
    ```yaml
    permissions:
      contents: read

@@ -30,6 +30,22 @@ jobs:
     name: Evaluate and Award Badges
     runs-on: ubuntu-latest
     steps:
+      - name: Validate authorized repository allowlist
+        env:
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NORMALIZED_REPO=$(echo "${TARGET_REPO}" | tr '[:upper:]' '[:lower:]')
+          case "${NORMALIZED_REPO}" in
+            "layer5io/sistent"|"meshery/meshery"|"meshery/meshery-operator"|"meshery/meshsync"|"layer5io/docs"|"meshery/meshery.io"|"layer5io/layer5")
+              echo "Repository '${TARGET_REPO}' is authorized for Track 2 badge automation."
+              ;;
+            *)
+              echo "::error::Repository '${TARGET_REPO}' is not an authorized Track 2 participating repository. Failing workflow."
+              exit 1
+              ;;
+          esac
+
       - name: Checkout trusted recognition engine
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 pinned SHA
         with:
@@ -39,16 +55,34 @@ jobs:
           sparse-checkout: |
             utils
 
-      - name: Collect PR metadata
+      - name: Verify PR status and collect metadata
+        id: collect-meta
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          echo "Collecting metadata for PR #${PR_NUMBER} in ${TARGET_REPO}..."
+          echo "Fetching Pull Request #${PR_NUMBER} in ${TARGET_REPO}..."
 
-          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json
+          if ! gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json 2>/dev/null; then
+            echo "::warning::Pull Request #${PR_NUMBER} not found in ${TARGET_REPO}. Exiting without dispatch."
+            echo "## ⚠️ Badge Evaluation Skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Pull Request #${PR_NUMBER} was not found in \`${TARGET_REPO}\`. Zero badges awarded." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          IS_MERGED=$(jq -r '.merged // false' .pr-info.json)
+          if [ "${IS_MERGED}" != "true" ]; then
+            echo "::warning::Pull Request #${PR_NUMBER} in ${TARGET_REPO} is not merged (merged=${IS_MERGED}). Skipping badge evaluation."
+            echo "## ⚠️ Badge Evaluation Skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Pull Request #${PR_NUMBER} in \`${TARGET_REPO}\` is not in a merged state. Zero badges awarded." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Pull Request #${PR_NUMBER} verified as merged. Fetching files, commits, and labels..."
           gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/files" --paginate --slurp | jq 'add // []' > .pr-files.json
           gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}/commits" --paginate --slurp | jq 'add // []' > .pr-commits.json
           gh api "repos/${TARGET_REPO}/issues/${PR_NUMBER}/labels" --paginate --slurp | jq 'add // []' > .existing-labels.json
@@ -60,8 +94,10 @@ jobs:
           const commits = JSON.parse(fs.readFileSync(".pr-commits.json"));
           fs.writeFileSync(".pr-metadata.json", JSON.stringify({ pr, files, commits }, null, 2));
           '
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Run badge award orchestrator
+        if: ${{ steps.collect-meta.outputs.skip == 'false' }}
         env:
           TARGET_REPO: ${{ github.repository }}
         run: |
@@ -74,6 +110,7 @@ jobs:
             --dispatch-out=".dispatch-context.json"
 
       - name: Publish evaluation step summary
+        if: ${{ steps.collect-meta.outputs.skip == 'false' }}
         run: |
           node -e '
           const fs = require("fs");
@@ -82,7 +119,7 @@ jobs:
           '
 
       - name: Verify Slack credentials for production run
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ steps.collect-meta.outputs.skip == 'false' && inputs.dry_run == false }}
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         run: |
@@ -98,6 +135,7 @@ jobs:
           fi
 
       - name: Sequentially dispatch awards and apply tracking labels
+        if: ${{ steps.collect-meta.outputs.skip == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_REPO: ${{ github.repository }}
@@ -196,17 +234,23 @@ jobs:
                     echo "Label '${LABEL_NAME}' already exists (race condition resolved)."
                   else
                     echo "::error::Fatal 422 error creating label '${LABEL_NAME}': $(cat "${CREATE_RESP_FILE}")"
+                    rm -f "${CREATE_RESP_FILE}"
                     exit 1
                   fi
                 else
                   echo "::error::Failed to create label '${LABEL_NAME}' (HTTP ${HTTP_CODE}): $(cat "${CREATE_RESP_FILE}")"
+                  rm -f "${CREATE_RESP_FILE}"
                   exit 1
                 fi
+                rm -f "${CREATE_RESP_FILE}"
               fi
 
               # Apply label to PR
               echo "Applying tracking label '${LABEL_NAME}' to PR #${PR_NUMBER}..."
-              gh issue edit "${PR_NUMBER}" --repo "${TARGET_REPO}" --add-label "${LABEL_NAME}"
+              if ! gh issue edit "${PR_NUMBER}" --repo "${TARGET_REPO}" --add-label "${LABEL_NAME}"; then
+                echo "::error::Slack award dispatched for badge '${BADGE_SLUG}' but GitHub label application failed. Manual tracking label intervention required."
+                exit 1
+              fi
               echo "Applied tracking label '${LABEL_NAME}'."
             fi
           done

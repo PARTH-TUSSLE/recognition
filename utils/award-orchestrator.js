@@ -1,6 +1,12 @@
 const fs = require('fs');
 const path = require('path');
-const { evaluateBadges, normalizeLabels, normalizeFiles } = require('./badge-evaluator');
+const {
+  evaluateBadges,
+  normalizeLabels,
+  normalizeFiles,
+  isSupportedRepository,
+  SUPPORTED_REPOSITORIES
+} = require('./badge-evaluator');
 const { resolveIdentity, maskEmail } = require('./identity-resolver');
 
 /**
@@ -135,13 +141,31 @@ function buildSummaryMarkdown({
   dcoReason,
   allEligibleBadges,
   alreadyAwardedBadges,
-  pendingAwards
+  pendingAwards,
+  isSupportedRepo,
+  isMerged
 }) {
   const lines = [];
   lines.push(`## 🎖️ Contributor Badge Evaluation Summary`);
   lines.push('');
   lines.push(`- **Target Repository**: \`${repo}\``);
   lines.push(`- **PR Author**: \`@${prAuthor || 'unknown'}\``);
+
+  if (!isSupportedRepo) {
+    lines.push('');
+    lines.push(`> [!WARNING]`);
+    lines.push(`> Repository \`${repo}\` is not an authorized Track 2 participating repository. Badge evaluation rejected.`);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  if (isMerged === false) {
+    lines.push('');
+    lines.push(`> [!WARNING]`);
+    lines.push(`> Pull request is not in a merged state. Badge assignment is strictly limited to merged pull requests.`);
+    lines.push('');
+    return lines.join('\n');
+  }
 
   if (maskedEmail) {
     lines.push(`- **Recipient Identity**: \`${maskedEmail}\` (${dcoVerified ? '✅ DCO Verified' : '⚠️ DCO Unverified'})`);
@@ -207,6 +231,8 @@ function getSanitizedReport(internalResult) {
     maskedEmail: internalResult.maskedEmail,
     dcoVerified: internalResult.dcoVerified,
     dcoReason: internalResult.dcoReason,
+    isSupportedRepo: internalResult.isSupportedRepo,
+    isMerged: internalResult.isMerged,
     allEligibleBadges: internalResult.allEligibleBadges,
     alreadyAwardedBadges: internalResult.alreadyAwardedBadges,
     unawardedBadges: internalResult.unawardedBadges,
@@ -241,6 +267,17 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
     ''
   ).trim();
 
+  // Validate supported repository allowlist
+  const isSupportedRepo = isSupportedRepository(repo);
+
+  // Validate merged status if present in metadata
+  let isMerged = true;
+  if (prMetadata.pr && typeof prMetadata.pr.merged === 'boolean') {
+    isMerged = prMetadata.pr.merged;
+  } else if (typeof prMetadata.merged === 'boolean') {
+    isMerged = prMetadata.merged;
+  }
+
   // Extract author
   const prAuthor = (
     prMetadata.prAuthor ||
@@ -261,6 +298,38 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
   // Extract and deduplicate commits across pages
   const rawCommits = prMetadata.commits || [];
   const dedupedCommits = deduplicateCommits(rawCommits);
+
+  // If repository is unsupported or PR is unmerged, fail closed immediately
+  if (!isSupportedRepo || isMerged === false) {
+    const summaryMarkdown = buildSummaryMarkdown({
+      repo,
+      prAuthor,
+      maskedEmail: '',
+      dcoVerified: false,
+      dcoReason: !isSupportedRepo ? 'Unsupported repository' : 'PR is not merged',
+      allEligibleBadges: [],
+      alreadyAwardedBadges: [],
+      pendingAwards: [],
+      isSupportedRepo,
+      isMerged
+    });
+
+    return {
+      repo,
+      prAuthor,
+      recipientEmail: null,
+      maskedEmail: '',
+      dcoVerified: false,
+      dcoReason: !isSupportedRepo ? 'Unsupported repository' : 'PR is not merged',
+      isSupportedRepo,
+      isMerged,
+      allEligibleBadges: [],
+      alreadyAwardedBadges: [],
+      unawardedBadges: [],
+      pendingAwards: [],
+      summaryMarkdown
+    };
+  }
 
   // Evaluate badge eligibility
   const { eligibleBadges } = evaluateBadges({
@@ -311,7 +380,9 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
     dcoReason: identity.reason,
     allEligibleBadges: eligibleBadges,
     alreadyAwardedBadges,
-    pendingAwards
+    pendingAwards,
+    isSupportedRepo,
+    isMerged
   });
 
   return {
@@ -321,6 +392,8 @@ function orchestrateAwards({ prMetadata = {}, existingLabels = [], repoOverride 
     maskedEmail: maskedRecipientEmail,
     dcoVerified: identity.dcoVerified,
     dcoReason: identity.reason,
+    isSupportedRepo,
+    isMerged,
     allEligibleBadges: eligibleBadges,
     alreadyAwardedBadges,
     unawardedBadges,

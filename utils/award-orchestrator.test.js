@@ -94,6 +94,51 @@ test('orchestrateAwards produces pending award on qualifying fresh PR', () => {
   assert.ok(result.summaryMarkdown.includes('Pending Dispatch'));
 });
 
+test('orchestrateAwards fails closed on unauthorized / unexpected repositories', () => {
+  const prMetadata = {
+    repository: 'malicious-org/arbitrary-repo',
+    prAuthor: 'hacker',
+    changedFiles: ['src/index.ts'],
+    commits: [
+      {
+        author: { login: 'hacker' },
+        commit: {
+          author: { name: 'Hacker', email: 'hacker@example.com' },
+          message: 'exploit\n\nSigned-off-by: Hacker <hacker@example.com>'
+        }
+      }
+    ]
+  };
+
+  const result = orchestrateAwards({ prMetadata });
+  assert.equal(result.isSupportedRepo, false);
+  assert.equal(result.pendingAwards.length, 0);
+  assert.ok(result.summaryMarkdown.includes('not an authorized Track 2 participating repository'));
+});
+
+test('orchestrateAwards fails closed on unmerged pull requests (merged guard)', () => {
+  const prMetadata = {
+    repository: 'layer5io/sistent',
+    prAuthor: 'contributor1',
+    merged: false, // Unmerged PR
+    changedFiles: ['src/button.tsx'],
+    commits: [
+      {
+        author: { login: 'contributor1' },
+        commit: {
+          author: { name: 'Contrib', email: 'contrib@layer5.io' },
+          message: 'feat: button\n\nSigned-off-by: Contrib <contrib@layer5.io>'
+        }
+      }
+    ]
+  };
+
+  const result = orchestrateAwards({ prMetadata });
+  assert.equal(result.isMerged, false);
+  assert.equal(result.pendingAwards.length, 0);
+  assert.ok(result.summaryMarkdown.includes('not in a merged state'));
+});
+
 test('orchestrateAwards filters out already awarded badges (Idempotency)', () => {
   const prMetadata = {
     repository: 'layer5io/sistent',
