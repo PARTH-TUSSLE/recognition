@@ -52,7 +52,7 @@ test('resolveIdentity: normal author + matching sign-off', () => {
   assert.equal(result.resolvedEmail, 'lee@layer5.io');
 });
 
-test('resolveIdentity: maintainer sign-off + contributor sign-off (multiple sign-offs)', () => {
+test('resolveIdentity: maintainer sign-off + contributor sign-off on same commit', () => {
   const commits = [
     {
       sha: 'squashed12345678',
@@ -69,7 +69,33 @@ test('resolveIdentity: maintainer sign-off + contributor sign-off (multiple sign
   assert.equal(result.resolvedEmail, 'contrib@layer5.io');
 });
 
-test('resolveIdentity: mismatched sign-off name and email (fails closed)', () => {
+test('resolveIdentity: author signed commit plus non-author / maintainer commit in PR', () => {
+  const commits = [
+    {
+      sha: 'auth111111111111',
+      author: { login: 'contributor1' },
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: 'feat: implement feature\n\nSigned-off-by: Contributor One <contrib@layer5.io>'
+      }
+    },
+    {
+      sha: 'maint22222222222',
+      author: { login: 'maintainerA' },
+      commit: {
+        author: { name: 'Maintainer A', email: 'maintainer@layer5.io' },
+        message: 'chore: merge master into branch\n\nSigned-off-by: Maintainer A <maintainer@layer5.io>'
+      }
+    }
+  ];
+
+  const result = resolveIdentity('contributor1', commits);
+  assert.equal(result.dcoVerified, true);
+  assert.equal(result.resolvedEmail, 'contrib@layer5.io');
+  assert.ok(result.reason.includes('Verified 1 commit(s) by @contributor1'));
+});
+
+test('resolveIdentity: mismatched sign-off name and email on author commit (fails closed)', () => {
   const commits = [
     {
       sha: 'mismatch12345678',
@@ -87,7 +113,7 @@ test('resolveIdentity: mismatched sign-off name and email (fails closed)', () =>
   assert.ok(result.reason.includes('does not match git commit author'));
 });
 
-test('resolveIdentity: commit author mismatch (commit author != PR author)', () => {
+test('resolveIdentity: commit author mismatch when no commits belong to PR author (fails closed)', () => {
   const commits = [
     {
       sha: 'authormismatch12',
@@ -102,7 +128,7 @@ test('resolveIdentity: commit author mismatch (commit author != PR author)', () 
   const result = resolveIdentity('alice', commits);
   assert.equal(result.dcoVerified, false);
   assert.equal(result.resolvedEmail, null);
-  assert.ok(result.reason.includes("does not match PR author '@alice'"));
+  assert.ok(result.reason.includes("No commits in PR matched GitHub-associated author '@alice'"));
 });
 
 test('resolveIdentity: missing GitHub-associated author account (fails closed)', () => {
@@ -122,10 +148,10 @@ test('resolveIdentity: missing GitHub-associated author account (fails closed)',
   const result = resolveIdentity('alice', commits);
   assert.equal(result.dcoVerified, false);
   assert.equal(result.resolvedEmail, null);
-  assert.ok(result.reason.includes('lacks a GitHub-associated author account'));
+  assert.ok(result.reason.includes("No commits in PR matched GitHub-associated author '@alice'"));
 });
 
-test('resolveIdentity: missing DCO in one of multiple commits (fails closed)', () => {
+test('resolveIdentity: missing DCO in one of author commits (fails closed)', () => {
   const commits = [
     {
       sha: '1111111111111111',
@@ -148,10 +174,10 @@ test('resolveIdentity: missing DCO in one of multiple commits (fails closed)', (
   const result = resolveIdentity('contributor1', commits);
   assert.equal(result.dcoVerified, false);
   assert.equal(result.resolvedEmail, null);
-  assert.ok(result.reason.includes('missing a valid DCO Signed-off-by trailer'));
+  assert.ok(result.reason.includes('is missing a valid DCO Signed-off-by trailer'));
 });
 
-test('resolveIdentity: multiple commits with conflicting emails (fails closed)', () => {
+test('resolveIdentity: multiple author commits with conflicting emails (fails closed)', () => {
   const commits = [
     {
       sha: '1111111111111111',
