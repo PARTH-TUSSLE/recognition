@@ -46,7 +46,7 @@ function maskEmail(email) {
 function extractDcoTrailers(message) {
   if (!message || typeof message !== 'string') return [];
   const trailers = [];
-  const regex = /^\s*Signed-off-by:\s*([^<\r\n]+)<([^>\r\n]+)>\s*$/gim;
+  const regex = /^[ \t]*Signed-off-by:[ \t]*([^<\r\n]+)<([^>\r\n]+)>[ \t]*$/gim;
   let match;
   while ((match = regex.exec(message)) !== null) {
     const name = match[1].trim();
