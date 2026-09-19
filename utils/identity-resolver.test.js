@@ -46,7 +46,10 @@ test('extractDcoTrailers rejects unanchored and prefixed trailer lines', () => {
     'Not-Signed-off-by: Lee Calcote <lee@layer5.io>',
     'Prefix Signed-off-by: Lee Calcote <lee@layer5.io>',
     'Signed-off-by: Lee Calcote <lee@layer5.io> Suffix text',
-    'Some text before Signed-off-by: Lee Calcote <lee@layer5.io> and after'
+    'Some text before Signed-off-by: Lee Calcote <lee@layer5.io> and after',
+    'Signed-off-by:\nLee Calcote <lee@layer5.io>',
+    'Signed-off-by:\r\nLee Calcote <lee@layer5.io>',
+    'Signed-off-by: Lee Calcote\n<lee@layer5.io>'
   ];
 
   for (const msg of invalidMessages) {
