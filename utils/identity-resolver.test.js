@@ -83,13 +83,13 @@ test('isTrailerAttributableToAuthor handles direct matches and noreply requireme
     true
   );
 
-  // Noreply with matching name (@noreply.github.com)
+  // Notification address (@noreply.github.com) is not a commit noreply address and must fail closed
   assert.equal(
     isTrailerAttributableToAuthor(
       { name: 'Alice Smith', email: 'alice.personal@example.com' },
       { name: 'Alice Smith', email: 'alicesmith@noreply.github.com' }
     ),
-    true
+    false
   );
 
   // Attacker domains mimicking noreply.github.com must fail closed

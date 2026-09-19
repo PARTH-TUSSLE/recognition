@@ -85,7 +85,7 @@ function isTrailerAttributableToAuthor(trailer, gitAuthor) {
   }
 
   // Rule 2: GitHub noreply email requiring strict git author name match
-  const isNoreply = gitEmail.endsWith('@users.noreply.github.com') || gitEmail.endsWith('@noreply.github.com');
+  const isNoreply = gitEmail.endsWith('@users.noreply.github.com');
   if (isNoreply && gitName && tName === gitName) {
     return true;
   }
