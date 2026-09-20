@@ -192,6 +192,85 @@ test('orchestrateAwards blocks awards when DCO is unverified', () => {
   assert.ok(result.summaryMarkdown.includes('DCO Blocked'));
 });
 
+test('orchestrateAwards safely handles noreply sign-off: DCO valid but recipient unresolvable (zero dispatches)', () => {
+  const prMetadata = {
+    repository: 'meshery/meshery',
+    prAuthor: 'noreplydev',
+    changedFiles: ['server/main.go'],
+    labels: [],
+    commits: [
+      {
+        author: { login: 'noreplydev' },
+        commit: {
+          author: { name: 'Noreply Dev', email: '99999+noreplydev@users.noreply.github.com' },
+          message: 'fix: update server\n\nSigned-off-by: Noreply Dev <99999+noreplydev@users.noreply.github.com>'
+        }
+      }
+    ]
+  };
+
+  const result = orchestrateAwards({ prMetadata });
+
+  assert.equal(result.dcoVerified, true);
+  assert.equal(result.recipientEmail, null);
+  assert.equal(result.allEligibleBadges.length, 1);
+  assert.equal(result.pendingAwards.length, 0, 'Cannot dispatch awards when recipient email is unresolvable');
+  assert.ok(result.summaryMarkdown.includes('Recipient Unresolvable'));
+  assert.ok(result.summaryMarkdown.includes('Zero awards dispatched'));
+});
+
+test('orchestrateAwards handles multiple qualifying PRs: PR-level replay protection vs independent PR evaluation', () => {
+  // Contributor merges PR #100 touching meshery
+  const pr100 = {
+    repository: 'meshery/meshery',
+    prAuthor: 'devX',
+    changedFiles: ['server/main.go'],
+    commits: [
+      {
+        author: { login: 'devX' },
+        commit: {
+          author: { name: 'Dev X', email: 'devx@example.com' },
+          message: 'feat: add server handler\n\nSigned-off-by: Dev X <devx@example.com>'
+        }
+      }
+    ]
+  };
+
+  // Initial evaluation of PR #100 -> produces pending award
+  const initialRunPR100 = orchestrateAwards({ prMetadata: pr100, existingLabels: [] });
+  assert.equal(initialRunPR100.pendingAwards.length, 1);
+  assert.equal(initialRunPR100.pendingAwards[0].slug, 'meshery');
+
+  // Replay of PR #100 after tracking label applied -> PR-level replay protection skips award
+  const replayRunPR100 = orchestrateAwards({
+    prMetadata: pr100,
+    existingLabels: ['badge-awarded:meshery']
+  });
+  assert.equal(replayRunPR100.pendingAwards.length, 0, 'PR-level tracking label prevents duplicate award on same PR replay');
+  assert.equal(replayRunPR100.alreadyAwardedBadges.length, 1);
+
+  // Subsequent PR #101 by the same contributor touching meshery (no label on PR #101 yet)
+  const pr101 = {
+    repository: 'meshery/meshery',
+    prAuthor: 'devX',
+    changedFiles: ['mesheryctl/cmd/system.go'],
+    commits: [
+      {
+        author: { login: 'devX' },
+        commit: {
+          author: { name: 'Dev X', email: 'devx@example.com' },
+          message: 'feat: system command\n\nSigned-off-by: Dev X <devx@example.com>'
+        }
+      }
+    ]
+  };
+
+  // Track 2 evaluates PR #101 independently (relying on downstream Cloud idempotency for contributor-level deduplication)
+  const runPR101 = orchestrateAwards({ prMetadata: pr101, existingLabels: [] });
+  assert.equal(runPR101.pendingAwards.length, 1);
+  assert.equal(runPR101.pendingAwards[0].slug, 'meshery');
+});
+
 test('Privacy verification: sanitized report and step summary never leak plaintext email', () => {
   const plaintextEmail = 'secret.contributor@privatecorp.com';
   const prMetadata = {
@@ -215,11 +294,13 @@ test('Privacy verification: sanitized report and step summary never leak plainte
 
   // Stringified sanitized report check
   const serialized = JSON.stringify(sanitized);
-  assert.equal(serialized.includes(plaintextEmail), false, 'Sanitized report must never contain plaintext email');
+  const leakedInJson = serialized.includes(plaintextEmail);
+  assert.equal(leakedInJson, false, 'Sanitized report must never contain plaintext email');
   assert.ok(serialized.includes(sanitized.maskedEmail), 'Sanitized report must contain masked email');
 
   // Summary markdown check
-  assert.equal(result.summaryMarkdown.includes(plaintextEmail), false, 'Summary markdown must never contain plaintext email');
+  const leakedInMarkdown = result.summaryMarkdown.includes(plaintextEmail);
+  assert.equal(leakedInMarkdown, false, 'Summary markdown must never contain plaintext email');
   assert.ok(result.summaryMarkdown.includes(sanitized.maskedEmail));
 });
 

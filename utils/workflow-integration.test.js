@@ -265,3 +265,165 @@ test('Integration: unauthorized repository fails closed and produces no awards',
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('Integration: GitHub noreply identity safely suppresses awards in pipeline while maintaining DCO verification', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-noreply-'));
+
+  const sensitiveHandle = '12345+noreplyuser';
+  const noreplyEmail = `${sensitiveHandle}@users.noreply.github.com`;
+
+  const prMetadata = {
+    repository: 'layer5io/sistent',
+    prAuthor: 'noreplyuser',
+    merged: true,
+    files: [{ filename: 'src/components/Button/index.tsx' }],
+    commits: [
+      {
+        sha: 'noreplycommit1',
+        author: { login: 'noreplyuser' },
+        commit: {
+          author: { name: 'Noreply User', email: noreplyEmail },
+          message: `feat: button\n\nSigned-off-by: Noreply User <${noreplyEmail}>`
+        }
+      }
+    ],
+    labels: []
+  };
+
+  const metadataPath = path.join(tmpDir, 'pr-metadata.json');
+  const labelsPath = path.join(tmpDir, 'existing-labels.json');
+  const publicOutPath = path.join(tmpDir, 'evaluation-result.json');
+  const dispatchOutPath = path.join(tmpDir, 'dispatch-context.json');
+
+  fs.writeFileSync(metadataPath, JSON.stringify(prMetadata), 'utf-8');
+  fs.writeFileSync(labelsPath, JSON.stringify([]), 'utf-8');
+
+  const scriptPath = path.resolve(__dirname, 'award-orchestrator.js');
+  execFileSync(process.execPath, [
+    scriptPath,
+    `--metadata=${metadataPath}`,
+    `--existing-labels=${labelsPath}`,
+    `--repo=layer5io/sistent`,
+    `--out=${publicOutPath}`,
+    `--dispatch-out=${dispatchOutPath}`
+  ]);
+
+  const publicContent = fs.readFileSync(publicOutPath, 'utf-8');
+  const publicJson = JSON.parse(publicContent);
+
+  // DCO is verified, but recipient cannot be mapped -> 0 pending awards
+  assert.equal(publicJson.dcoVerified, true);
+  assert.equal(publicJson.pendingAwards.length, 0);
+  assert.ok(publicJson.summaryMarkdown.includes('Recipient Unresolvable'));
+
+  // Privacy invariant: public output does not contain the sensitive handle prefix
+  const leakedHandle = publicContent.includes(sensitiveHandle);
+  assert.equal(leakedHandle, false, 'Public output must not contain sensitive handle');
+
+  // Dispatch context must have null recipientEmail and empty pendingAwards
+  const dispatchJson = JSON.parse(fs.readFileSync(dispatchOutPath, 'utf-8'));
+  assert.equal(dispatchJson.recipientEmail, null);
+  assert.equal(dispatchJson.pendingAwards.length, 0);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Workflow Shell Logic: GitHub API error classification distinguishes 404 (skip) from 403, 429, 5xx, and transport errors (fail)', () => {
+  const evaluateApiError = (errMsg) => {
+    const bashScript = `
+      GH_ERR_MSG=$1
+      if echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 404|Not Found"; then
+        echo "SKIP_404"
+        exit 0
+      elif echo "\${GH_ERR_MSG}" | grep -q "HTTP 403"; then
+        echo "FAIL_403"
+        exit 1
+      elif echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 429|rate limit"; then
+        echo "FAIL_429"
+        exit 1
+      elif echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 5[0-9]{2}"; then
+        echo "FAIL_5XX"
+        exit 1
+      else
+        echo "FAIL_TRANSPORT"
+        exit 1
+      fi
+    `;
+    try {
+      const out = execFileSync('bash', ['-c', bashScript, 'test-sh', errMsg], { encoding: 'utf-8' });
+      return { status: 0, output: out.trim() };
+    } catch (err) {
+      return { status: err.status, output: (err.stdout || '').trim() };
+    }
+  };
+
+  // HTTP 404 -> skip gracefully
+  const res404 = evaluateApiError('gh: Not Found (HTTP 404)');
+  assert.equal(res404.status, 0);
+  assert.equal(res404.output, 'SKIP_404');
+
+  // HTTP 403 -> fail
+  const res403 = evaluateApiError('gh: Forbidden (HTTP 403)');
+  assert.equal(res403.status, 1);
+  assert.equal(res403.output, 'FAIL_403');
+
+  // HTTP 429 -> fail
+  const res429 = evaluateApiError('gh: API rate limit exceeded for user (HTTP 429)');
+  assert.equal(res429.status, 1);
+  assert.equal(res429.output, 'FAIL_429');
+
+  // HTTP 500 / 502 / 503 -> fail
+  const res500 = evaluateApiError('gh: Server Error (HTTP 500)');
+  assert.equal(res500.status, 1);
+  assert.equal(res500.output, 'FAIL_5XX');
+
+  // Network / Transport error -> fail
+  const resTransport = evaluateApiError('curl: (7) Failed to connect to api.github.com port 443: Connection refused');
+  assert.equal(resTransport.status, 1);
+  assert.equal(resTransport.output, 'FAIL_TRANSPORT');
+});
+
+test('Workflow Shell Logic: Label query status branching explicitly handles 200, 404, 403, 429, and 5xx', () => {
+  const evaluateLabelStatus = (statusCode) => {
+    const bashScript = `
+      LABEL_STATUS=$1
+      if [ "\${LABEL_STATUS}" = "200" ]; then
+        echo "EXISTS"
+        exit 0
+      elif [ "\${LABEL_STATUS}" = "404" ]; then
+        echo "CREATE_LABEL"
+        exit 0
+      elif [ "\${LABEL_STATUS}" = "403" ]; then
+        echo "FAIL_403"
+        exit 1
+      elif [ "\${LABEL_STATUS}" = "429" ]; then
+        echo "FAIL_429"
+        exit 1
+      elif [[ "\${LABEL_STATUS}" =~ ^5[0-9]{2}$ ]]; then
+        echo "FAIL_5XX"
+        exit 1
+      else
+        echo "FAIL_UNEXPECTED"
+        exit 1
+      fi
+    `;
+    try {
+      const out = execFileSync('bash', ['-c', bashScript, 'test-sh', statusCode], { encoding: 'utf-8' });
+      return { status: 0, output: out.trim() };
+    } catch (err) {
+      return { status: err.status, output: (err.stdout || '').trim() };
+    }
+  };
+
+  assert.equal(evaluateLabelStatus('200').output, 'EXISTS');
+  assert.equal(evaluateLabelStatus('404').output, 'CREATE_LABEL');
+  assert.equal(evaluateLabelStatus('403').output, 'FAIL_403');
+  assert.equal(evaluateLabelStatus('403').status, 1);
+  assert.equal(evaluateLabelStatus('429').output, 'FAIL_429');
+  assert.equal(evaluateLabelStatus('429').status, 1);
+  assert.equal(evaluateLabelStatus('500').output, 'FAIL_5XX');
+  assert.equal(evaluateLabelStatus('500').status, 1);
+  assert.equal(evaluateLabelStatus('000').output, 'FAIL_UNEXPECTED');
+  assert.equal(evaluateLabelStatus('000').status, 1);
+});
+

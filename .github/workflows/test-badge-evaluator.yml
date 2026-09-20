@@ -50,13 +50,37 @@ jobs:
           set -euo pipefail
           echo "Evaluating PR #${PR_NUMBER} from repository: ${TARGET_REPO}..."
 
-          if ! gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json 2>/dev/null; then
-            echo "::warning::Pull Request #${PR_NUMBER} not found in ${TARGET_REPO}."
-            echo "## ⚠️ Badge Evaluation Skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "Pull Request #${PR_NUMBER} was not found in \`${TARGET_REPO}\`." >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          GH_ERR_FILE=$(mktemp)
+          set +e
+          gh api "repos/${TARGET_REPO}/pulls/${PR_NUMBER}" > .pr-info.json 2> "${GH_ERR_FILE}"
+          GH_EXIT_CODE=$?
+          set -e
+
+          if [ ${GH_EXIT_CODE} -ne 0 ]; then
+            GH_ERR_MSG=$(cat "${GH_ERR_FILE}")
+            rm -f "${GH_ERR_FILE}"
+
+            if echo "${GH_ERR_MSG}" | grep -q -E "HTTP 404|Not Found"; then
+              echo "::warning::Pull Request #${PR_NUMBER} not found in ${TARGET_REPO}."
+              echo "## ⚠️ Badge Evaluation Skipped" >> "$GITHUB_STEP_SUMMARY"
+              echo "Pull Request #${PR_NUMBER} was not found in \`${TARGET_REPO}\`." >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            elif echo "${GH_ERR_MSG}" | grep -q "HTTP 403"; then
+              echo "::error::GitHub API access forbidden (HTTP 403) while querying PR #${PR_NUMBER} in ${TARGET_REPO}: ${GH_ERR_MSG}"
+              exit 1
+            elif echo "${GH_ERR_MSG}" | grep -q -E "HTTP 429|rate limit"; then
+              echo "::error::GitHub API rate limit exceeded (HTTP 429) while querying PR #${PR_NUMBER} in ${TARGET_REPO}: ${GH_ERR_MSG}"
+              exit 1
+            elif echo "${GH_ERR_MSG}" | grep -q -E "HTTP 5[0-9]{2}"; then
+              echo "::error::GitHub API server error while querying PR #${PR_NUMBER} in ${TARGET_REPO}: ${GH_ERR_MSG}"
+              exit 1
+            else
+              echo "::error::GitHub API error or network/transport failure while querying PR #${PR_NUMBER} in ${TARGET_REPO}: ${GH_ERR_MSG}"
+              exit 1
+            fi
           fi
+          rm -f "${GH_ERR_FILE}"
 
           IS_MERGED=$(jq -r '.merged // false' .pr-info.json)
           if [ "${IS_MERGED}" != "true" ]; then

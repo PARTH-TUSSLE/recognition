@@ -79,6 +79,11 @@ function isTrailerAttributableToAuthor(trailer, gitAuthor) {
   const gitEmail = (gitAuthor.email || '').trim().toLowerCase();
   const gitName = (gitAuthor.name || '').trim().toLowerCase();
 
+  // Generic @noreply.github.com is a notification address, never valid for commit or trailer attribution
+  if (gitEmail.endsWith('@noreply.github.com') || tEmail.endsWith('@noreply.github.com')) {
+    return false;
+  }
+
   // Rule 1: Direct git commit author email match
   if (gitEmail && tEmail === gitEmail) {
     return true;
@@ -198,6 +203,16 @@ function resolveIdentity(prAuthor, commits) {
   }
 
   const verifiedEmail = distinctEmails[0];
+
+  // If the verified trailer is a GitHub noreply address, DCO is valid but recipient cannot be mapped to a Layer5 user
+  if (verifiedEmail.endsWith('@users.noreply.github.com')) {
+    return {
+      resolvedEmail: null,
+      dcoVerified: true,
+      reason: `Verified ${authorCommits.length} commit(s) by @${prAuthor} with DCO Signed-off-by trailer, but recipient uses a GitHub noreply address (@users.noreply.github.com) which cannot be mapped to a Layer5 award recipient`
+    };
+  }
+
   return {
     resolvedEmail: verifiedEmail,
     dcoVerified: true,

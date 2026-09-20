@@ -169,6 +169,8 @@ function buildSummaryMarkdown({
 
   if (maskedEmail) {
     lines.push(`- **Recipient Identity**: \`${maskedEmail}\` (${dcoVerified ? '✅ DCO Verified' : '⚠️ DCO Unverified'})`);
+  } else if (dcoVerified) {
+    lines.push(`- **Recipient Identity**: ⚠️ Unresolved award recipient (✅ DCO Verified)`);
   } else {
     lines.push(`- **Recipient Identity**: ⚠️ Unresolved email`);
   }
@@ -194,12 +196,20 @@ function buildSummaryMarkdown({
       status = '✅ **Already Awarded**';
     } else if (!dcoVerified) {
       status = '⚠️ **DCO Blocked**';
+    } else if (!maskedEmail) {
+      status = '⚠️ **Recipient Unresolvable**';
     }
 
     lines.push(`| **${badge.name}** | \`${badge.slug}\` | ${status} | ${trackingLabel} | ${badge.reason} |`);
   }
 
   lines.push('');
+
+  if (dcoVerified && !maskedEmail && allEligibleBadges.length > 0 && alreadyAwardedBadges.length === 0) {
+    lines.push(`> [!WARNING]`);
+    lines.push(`> DCO Signed-off-by trailer is verified, but recipient identity cannot be mapped to a Layer5 award recipient. Zero awards dispatched.`);
+    lines.push('');
+  }
 
   if (pendingAwards.length > 0) {
     lines.push(`### Planned Dispatches (${pendingAwards.length})`);

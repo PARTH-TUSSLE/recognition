@@ -161,14 +161,60 @@ test('resolveIdentity: GitHub noreply commit author with matching trailer name',
   assert.equal(result.resolvedEmail, 'mona@example.com');
 });
 
+test('resolveIdentity: GitHub noreply commit author who signs off with noreply address (CASE B)', () => {
+  const sensitiveUsername = '12345+octocat';
+  const noreplyEmail = `${sensitiveUsername}@users.noreply.github.com`;
+  const commits = [
+    {
+      sha: 'noreplysame1234',
+      author: { login: 'octocat' },
+      commit: {
+        author: { name: 'Mona Lisa Octocat', email: noreplyEmail },
+        message: `docs: web update\n\nSigned-off-by: Mona Lisa Octocat <${noreplyEmail}>`
+      }
+    }
+  ];
+
+  const result = resolveIdentity('octocat', commits);
+  // DCO is valid according to git rules, but recipient is unresolvable for Layer5 awards
+  assert.equal(result.dcoVerified, true);
+  assert.equal(result.resolvedEmail, null, 'Must not use noreply email as award recipient');
+  assert.ok(result.reason.includes('cannot be mapped to a Layer5 award recipient'));
+  // Privacy invariant: Reason must not contain contributor username or sensitive prefix
+  const leakedUsername = result.reason.includes(sensitiveUsername);
+  assert.equal(leakedUsername, false, 'Reason must not leak sensitive username prefix');
+});
+
+test('resolveIdentity: trailer using generic @noreply.github.com fails closed (CASE C)', () => {
+  const genericNoreply = 'mona@noreply.github.com';
+  const commits = [
+    {
+      sha: 'genericnoreply1',
+      author: { login: 'octocat' },
+      commit: {
+        author: { name: 'Mona Lisa Octocat', email: genericNoreply },
+        message: `docs: web update\n\nSigned-off-by: Mona Lisa Octocat <${genericNoreply}>`
+      }
+    }
+  ];
+
+  const result = resolveIdentity('octocat', commits);
+  assert.equal(result.dcoVerified, false);
+  assert.equal(result.resolvedEmail, null);
+  assert.ok(result.reason.includes('has no Signed-off-by trailer attributable to author'));
+  const leakedEmail = result.reason.includes(genericNoreply);
+  assert.equal(leakedEmail, false, 'Reason must not leak email');
+});
+
 test('resolveIdentity: GitHub noreply commit author with mismatched trailer name fails closed', () => {
+  const fakeEmail = 'impostor@example.com';
   const commits = [
     {
       sha: 'noreplymismatch1',
       author: { login: 'octocat' },
       commit: {
         author: { name: 'Mona Lisa Octocat', email: '12345+octocat@users.noreply.github.com' },
-        message: 'docs: update\n\nSigned-off-by: Impostor User <impostor@example.com>'
+        message: `docs: update\n\nSigned-off-by: Impostor User <${fakeEmail}>`
       }
     }
   ];
@@ -178,7 +224,8 @@ test('resolveIdentity: GitHub noreply commit author with mismatched trailer name
   assert.equal(result.resolvedEmail, null);
   assert.ok(result.reason.includes('has no Signed-off-by trailer attributable to author'));
   // Ensure no plaintext email leaked in reason
-  assert.equal(result.reason.includes('impostor@example.com'), false);
+  const leaked = result.reason.includes(fakeEmail);
+  assert.equal(leaked, false, 'Reason must not leak trailer email');
 });
 
 test('resolveIdentity: maintainer sign-off + contributor sign-off on same commit', () => {
