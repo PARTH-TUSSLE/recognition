@@ -36,25 +36,57 @@ function maskEmail(email) {
 }
 
 /**
- * Extracts all valid Signed-off-by trailers from a commit message.
+ * Extracts all valid Signed-off-by trailers from the terminal Git trailer block of a commit message.
  * Formats supported: "Signed-off-by: First Last <email@domain.com>"
- * Strictly validates trailer syntax and email format.
+ *
+ * Terminal Trailer Block Rules (Git interpret-trailers specification):
+ * 1. Must be located in the terminal paragraph at the end of the commit message.
+ * 2. Every line in the terminal block must be a valid trailer line ("Token: Value").
+ * 3. No subsequent body text may follow the trailer block.
+ * 4. Strictly validates trailer syntax and email format.
  *
  * @param {string} message Commit message
  * @returns {Array<{ name: string, email: string }>}
  */
 function extractDcoTrailers(message) {
   if (!message || typeof message !== 'string') return [];
-  const trailers = [];
-  const regex = /^[ \t]*Signed-off-by:[ \t]*([^<\r\n]+)<([^>\r\n]+)>[ \t]*$/gim;
-  let match;
-  while ((match = regex.exec(message)) !== null) {
-    const name = match[1].trim();
-    const rawEmail = match[2].trim();
-    if (name && isValidEmail(rawEmail)) {
-      trailers.push({ name, email: rawEmail.toLowerCase() });
+
+  // Normalize line breaks and trim trailing whitespace
+  const normalized = message.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+  if (!normalized) return [];
+
+  // Split into paragraphs separated by one or more blank lines
+  const paragraphs = normalized.split(/\n[ \t]*\n+/);
+  const terminalParagraph = paragraphs[paragraphs.length - 1].trim();
+  if (!terminalParagraph) return [];
+
+  const lines = terminalParagraph.split('\n');
+
+  // Verify that EVERY line in the terminal paragraph is a valid trailer line
+  // (e.g. "Signed-off-by: ...", "Co-authored-by: ...", "Fixes: ...", "Token: Value")
+  const genericTrailerRegex = /^[ \t]*[A-Za-z0-9-_]+:[ \t]*.*$/;
+  for (const line of lines) {
+    if (!genericTrailerRegex.test(line)) {
+      // If there is regular body text in the terminal block, it is not a valid trailer block
+      return [];
     }
   }
+
+  // Parse Signed-off-by trailers from the terminal trailer block
+  const dcoTrailerRegex = /^[ \t]*Signed-off-by:[ \t]*([^<\r\n]+)<([^>\r\n]+)>[ \t]*$/i;
+  const trailers = [];
+
+  for (const line of lines) {
+    const match = dcoTrailerRegex.exec(line);
+    if (match) {
+      const name = match[1].trim();
+      const rawEmail = match[2].trim();
+      if (name && isValidEmail(rawEmail)) {
+        trailers.push({ name, email: rawEmail.toLowerCase() });
+      }
+    }
+  }
+
   return trailers;
 }
 
@@ -107,6 +139,12 @@ function isTrailerAttributableToAuthor(trailer, gitAuthor) {
  * → DCO Signed-off-by trailer deterministically attributable to that commit author
  * → verified RFC-compliant email
  *
+ * Security & Anti-Spoofing Invariant:
+ * When a commit author uses a GitHub noreply email (@users.noreply.github.com),
+ * a real recipient email is NEVER resolved solely from matching contributor-controlled names.
+ * Exact noreply DCO attribution is preserved (dcoVerified: true), but resolvedEmail
+ * remains null.
+ *
  * Privacy Invariant:
  * The returned reason string NEVER contains plaintext contributor email addresses.
  *
@@ -148,6 +186,7 @@ function resolveIdentity(prAuthor, commits) {
   }
 
   const commitEmails = [];
+  let hasNoreplyAuthor = false;
 
   for (let idx = 0; idx < authorCommits.length; idx++) {
     const item = authorCommits[idx];
@@ -155,6 +194,10 @@ function resolveIdentity(prAuthor, commits) {
 
     // Git commit author metadata
     const gitAuthor = item.commit && item.commit.author ? item.commit.author : {};
+    const gitEmail = (gitAuthor.email || '').trim().toLowerCase();
+    if (gitEmail.endsWith('@users.noreply.github.com')) {
+      hasNoreplyAuthor = true;
+    }
 
     // Extract DCO trailers
     const message = item.commit ? item.commit.message : (item.message || '');
@@ -204,12 +247,23 @@ function resolveIdentity(prAuthor, commits) {
 
   const verifiedEmail = distinctEmails[0];
 
-  // If the verified trailer is a GitHub noreply address, DCO is valid but recipient cannot be mapped to a Layer5 user
-  if (verifiedEmail.endsWith('@users.noreply.github.com')) {
+  // If the commit author used a GitHub noreply address (@users.noreply.github.com),
+  // never resolve a real recipient email solely from contributor-controlled names.
+  // Exact noreply DCO attribution is preserved (dcoVerified: true), but recipient
+  // remains unresolved (resolvedEmail: null).
+  if (hasNoreplyAuthor || verifiedEmail.endsWith('@users.noreply.github.com')) {
+    if (verifiedEmail.endsWith('@users.noreply.github.com')) {
+      return {
+        resolvedEmail: null,
+        dcoVerified: true,
+        reason: `Verified ${authorCommits.length} commit(s) by @${prAuthor} with DCO Signed-off-by trailer, but recipient uses a GitHub noreply address (@users.noreply.github.com) which cannot be mapped to a Layer5 award recipient`
+      };
+    }
+
     return {
       resolvedEmail: null,
       dcoVerified: true,
-      reason: `Verified ${authorCommits.length} commit(s) by @${prAuthor} with DCO Signed-off-by trailer, but recipient uses a GitHub noreply address (@users.noreply.github.com) which cannot be mapped to a Layer5 award recipient`
+      reason: `Verified ${authorCommits.length} commit(s) by @${prAuthor} with DCO Signed-off-by trailer, but commit author uses a GitHub noreply address (@users.noreply.github.com); recipient cannot be resolved from contributor-controlled names`
     };
   }
 

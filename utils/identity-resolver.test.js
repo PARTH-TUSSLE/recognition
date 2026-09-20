@@ -64,6 +64,38 @@ test('extractDcoTrailers rejects unanchored and prefixed trailer lines', () => {
   assert.equal(trailers[0].email, 'lee@layer5.io');
 });
 
+test('extractDcoTrailers rejects Signed-off-by followed by later body text (terminal trailer block invariant)', () => {
+  // 1. Later body text in a subsequent paragraph
+  const msgWithLaterParagraph = `feat(api): update endpoints\n\nSigned-off-by: Lee Calcote <lee@layer5.io>\n\nNote: This commit was later amended and should not be credited.`;
+  assert.equal(extractDcoTrailers(msgWithLaterParagraph).length, 0);
+
+  // 2. Later body text in the same paragraph
+  const msgWithSameParagraphBody = `feat(api): update endpoints\n\nSigned-off-by: Lee Calcote <lee@layer5.io>\nAdditional explanatory body text here.`;
+  assert.equal(extractDcoTrailers(msgWithSameParagraphBody).length, 0);
+
+  // 3. Body text before Signed-off-by in the same paragraph without blank line
+  const msgWithPrecedingParagraphBody = `feat(api): update endpoints\n\nSome body text without empty line separation\nSigned-off-by: Lee Calcote <lee@layer5.io>`;
+  assert.equal(extractDcoTrailers(msgWithPrecedingParagraphBody).length, 0);
+});
+
+test('resolveIdentity fails closed when Signed-off-by is not in terminal trailer block', () => {
+  const commits = [
+    {
+      sha: 'terminal1234567',
+      author: { login: 'leecalcote' },
+      commit: {
+        author: { name: 'Lee Calcote', email: 'lee@layer5.io' },
+        message: 'fix: update configuration\n\nSigned-off-by: Lee Calcote <lee@layer5.io>\n\nLater text explaining the change'
+      }
+    }
+  ];
+
+  const result = resolveIdentity('leecalcote', commits);
+  assert.equal(result.dcoVerified, false);
+  assert.equal(result.resolvedEmail, null);
+  assert.ok(result.reason.includes('missing a valid DCO Signed-off-by trailer'));
+});
+
 test('isTrailerAttributableToAuthor handles direct matches and noreply requirements', () => {
   // Direct email match
   assert.equal(
@@ -144,7 +176,7 @@ test('resolveIdentity: normal author + matching sign-off', () => {
   assert.equal(result.resolvedEmail, 'lee@layer5.io');
 });
 
-test('resolveIdentity: GitHub noreply commit author with matching trailer name', () => {
+test('resolveIdentity: GitHub noreply commit author with matching trailer name preserves DCO but keeps recipient unresolved', () => {
   const commits = [
     {
       sha: 'noreply12345678',
@@ -157,8 +189,30 @@ test('resolveIdentity: GitHub noreply commit author with matching trailer name',
   ];
 
   const result = resolveIdentity('octocat', commits);
-  assert.equal(result.dcoVerified, true);
-  assert.equal(result.resolvedEmail, 'mona@example.com');
+  assert.equal(result.dcoVerified, true, 'DCO attribution is preserved for matching trailer name');
+  assert.equal(result.resolvedEmail, null, 'Must never resolve recipient email solely from matching contributor-controlled name on noreply author');
+  assert.ok(result.reason.includes('cannot be resolved from contributor-controlled names'));
+});
+
+test('resolveIdentity: spoofing regression - attacker using noreply author cannot claim victim email via matching trailer name', () => {
+  const victimEmail = 'victim@layer5.io';
+  const commits = [
+    {
+      sha: 'spoof12345678',
+      author: { login: 'attacker' },
+      commit: {
+        // Attacker sets their git author name to victim's name, but author email is attacker's GitHub noreply
+        author: { name: 'Victim User', email: '99999+attacker@users.noreply.github.com' },
+        message: `feat: malicious change\n\nSigned-off-by: Victim User <${victimEmail}>`
+      }
+    }
+  ];
+
+  const result = resolveIdentity('attacker', commits);
+  assert.equal(result.resolvedEmail, null, 'Must never resolve spoofed victim email from noreply commit author');
+  assert.equal(result.dcoVerified, true, 'DCO trailer name match preserves DCO attribution');
+  assert.ok(result.reason.includes('cannot be resolved from contributor-controlled names'));
+  assert.equal(result.reason.includes(victimEmail), false, 'Reason must not leak victim email');
 });
 
 test('resolveIdentity: GitHub noreply commit author who signs off with noreply address (CASE B)', () => {
