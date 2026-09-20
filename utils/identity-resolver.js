@@ -192,6 +192,14 @@ function resolveIdentity(prAuthor, commits) {
     const item = authorCommits[idx];
     const sha = (item && item.sha ? item.sha.slice(0, 7) : `commit-${idx + 1}`);
 
+    // Skip merge commits (parents > 1): these are GitHub-generated merge commits
+    // that never carry DCO trailers. Must be skipped before reading git author
+    // metadata to prevent false noreply detection.
+    const parents = item.parents || (item.commit && item.commit.parents) || [];
+    if (Array.isArray(parents) && parents.length > 1) {
+      continue;
+    }
+
     // Git commit author metadata
     const gitAuthor = item.commit && item.commit.author ? item.commit.author : {};
     const gitEmail = (gitAuthor.email || '').trim().toLowerCase();
@@ -237,6 +245,17 @@ function resolveIdentity(prAuthor, commits) {
 
   // Verify email consistency across all PR-author commits
   const distinctEmails = [...new Set(commitEmails)];
+
+  // If all author commits were merge commits (all skipped), there are no
+  // code commits to evaluate. Fail closed.
+  if (distinctEmails.length === 0) {
+    return {
+      resolvedEmail: null,
+      dcoVerified: false,
+      reason: `No non-merge code commits found for @${prAuthor} (all ${authorCommits.length} commit(s) are merge commits)`
+    };
+  }
+
   if (distinctEmails.length > 1) {
     return {
       resolvedEmail: null,

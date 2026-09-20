@@ -457,3 +457,86 @@ test('resolveIdentity: squashed commit with multiple sign-offs', () => {
   assert.equal(result.dcoVerified, true);
   assert.equal(result.resolvedEmail, 'dev@company.com');
 });
+
+test('resolveIdentity: signed normal commit + unsigned merge commit => success (merge commit skipped)', () => {
+  const commits = [
+    {
+      sha: 'code111111111111',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parent1' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: 'feat: add feature\n\nSigned-off-by: Contributor One <contrib@layer5.io>'
+      }
+    },
+    {
+      sha: 'merge222222222222',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parentA' }, { sha: 'parentB' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: "Merge branch 'master' into feat/my-feature"
+      }
+    }
+  ];
+
+  const result = resolveIdentity('contributor1', commits);
+  assert.equal(result.dcoVerified, true);
+  assert.equal(result.resolvedEmail, 'contrib@layer5.io');
+});
+
+test('resolveIdentity: merge-only commit history => fails closed (no code commits)', () => {
+  const commits = [
+    {
+      sha: 'merge333333333333',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parentA' }, { sha: 'parentB' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: "Merge branch 'master' into feat/my-feature"
+      }
+    },
+    {
+      sha: 'merge444444444444',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parentC' }, { sha: 'parentD' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: "Merge branch 'develop' into feat/my-feature"
+      }
+    }
+  ];
+
+  const result = resolveIdentity('contributor1', commits);
+  assert.equal(result.dcoVerified, false);
+  assert.equal(result.resolvedEmail, null);
+  assert.ok(result.reason.includes('No non-merge code commits found'));
+});
+
+test('resolveIdentity: unsigned normal commit + merge commit => fails closed (merge skip does not rescue unsigned code)', () => {
+  const commits = [
+    {
+      sha: 'unsigned55555555',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parent1' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: 'feat: add feature without DCO'
+      }
+    },
+    {
+      sha: 'merge666666666666',
+      author: { login: 'contributor1' },
+      parents: [{ sha: 'parentA' }, { sha: 'parentB' }],
+      commit: {
+        author: { name: 'Contributor One', email: 'contrib@layer5.io' },
+        message: "Merge branch 'master' into feat/my-feature"
+      }
+    }
+  ];
+
+  const result = resolveIdentity('contributor1', commits);
+  assert.equal(result.dcoVerified, false);
+  assert.equal(result.resolvedEmail, null);
+  assert.ok(result.reason.includes('missing a valid DCO Signed-off-by trailer'));
+});

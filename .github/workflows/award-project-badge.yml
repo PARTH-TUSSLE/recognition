@@ -225,6 +225,9 @@ jobs:
               echo "[DRY-RUN] Would post award command for ${BADGE_SLUG} to recipient (${MASKED_EMAIL})"
             else
               echo "Dispatching award for ${BADGE_SLUG} to recipient (${MASKED_EMAIL})..."
+              # The bot posts a message containing "/award-badge <email> <slug>" to the
+              # canonical Slack channel. The Layer5 Cloud Slack integration monitors this
+              # channel and consumes the message to issue the badge award.
               PAYLOAD=$(jq -n \
                 --arg ch "${CANONICAL_SLACK_CHANNEL}" \
                 --arg txt "/award-badge ${EMAIL} ${BADGE_SLUG}" \

@@ -456,3 +456,48 @@ test('Workflow Shell Logic: Label query status branching explicitly handles 200,
   assert.equal(evaluateLabelStatus('000').status, 1);
 });
 
+test('Allowlist Drift Detection: workflow shell case statements match SUPPORTED_REPOSITORIES', () => {
+  const { SUPPORTED_REPOSITORIES } = require('./badge-evaluator');
+
+  const jsSet = new Set(SUPPORTED_REPOSITORIES.map(r => r.toLowerCase()));
+
+  // Extract repositories from shell case statements in workflow files
+  const workflowFiles = [
+    path.join(__dirname, '..', '.github', 'workflows', 'award-project-badge.yml'),
+    path.join(__dirname, '..', '.github', 'workflows', 'test-badge-evaluator.yml')
+  ];
+
+  for (const workflowPath of workflowFiles) {
+    const basename = path.basename(workflowPath);
+    const content = fs.readFileSync(workflowPath, 'utf-8');
+
+    // Match the case pattern line: "repo1"|"repo2"|...) at the start of a case branch
+    const caseMatch = content.match(/"([^"]+)"(?:\|"([^"]+)")*\)/g);
+    assert.ok(caseMatch && caseMatch.length > 0, `No case pattern found in ${basename}`);
+
+    // Take the first case match (the allowlist pattern)
+    const patternLine = caseMatch[0];
+    const shellRepos = new Set(
+      patternLine
+        .replace(/\)$/, '')
+        .split('|')
+        .map(s => s.replace(/"/g, '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    // Compare as sets: find missing and extra
+    const missingFromShell = [...jsSet].filter(r => !shellRepos.has(r));
+    const extraInShell = [...shellRepos].filter(r => !jsSet.has(r));
+
+    assert.deepStrictEqual(
+      missingFromShell,
+      [],
+      `${basename}: repositories in SUPPORTED_REPOSITORIES but missing from shell case: ${missingFromShell.join(', ')}`
+    );
+    assert.deepStrictEqual(
+      extraInShell,
+      [],
+      `${basename}: repositories in shell case but missing from SUPPORTED_REPOSITORIES: ${extraInShell.join(', ')}`
+    );
+  }
+});
