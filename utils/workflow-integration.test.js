@@ -328,57 +328,86 @@ test('Integration: GitHub noreply identity safely suppresses awards in pipeline 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('Workflow Shell Logic: GitHub API error classification distinguishes 404 (skip) from 403, 429, 5xx, and transport errors (fail)', () => {
-  const evaluateApiError = (errMsg) => {
+test('Workflow Shell Logic: GitHub API error classification determines outcome strictly by numeric HTTP status, not response message', () => {
+  const evaluateApiHttpResponse = (rawHeaderAndBody, simulateTransportFailure = false) => {
+    const tmpResp = path.join(os.tmpdir(), `test-resp-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    const tmpErr = path.join(os.tmpdir(), `test-err-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+
+    if (!simulateTransportFailure) {
+      fs.writeFileSync(tmpResp, rawHeaderAndBody, 'utf-8');
+      fs.writeFileSync(tmpErr, '', 'utf-8');
+    } else {
+      fs.writeFileSync(tmpResp, '', 'utf-8');
+      fs.writeFileSync(tmpErr, rawHeaderAndBody, 'utf-8');
+    }
+
     const bashScript = `
-      GH_ERR_MSG=$1
-      if echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 404|Not Found"; then
+      GH_RESP_FILE="$1"
+      GH_ERR_FILE="$2"
+
+      HTTP_STATUS=""
+      if [ -s "\${GH_RESP_FILE}" ]; then
+        HTTP_STATUS=$(head -n 1 "\${GH_RESP_FILE}" | awk '{print $2}')
+      fi
+
+      if [ "\${HTTP_STATUS}" = "200" ]; then
+        echo "SUCCESS_200"
+        exit 0
+      elif [ "\${HTTP_STATUS}" = "404" ]; then
         echo "SKIP_404"
         exit 0
-      elif echo "\${GH_ERR_MSG}" | grep -q "HTTP 403"; then
+      elif [ "\${HTTP_STATUS}" = "403" ]; then
         echo "FAIL_403"
         exit 1
-      elif echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 429|rate limit"; then
+      elif [ "\${HTTP_STATUS}" = "429" ]; then
         echo "FAIL_429"
         exit 1
-      elif echo "\${GH_ERR_MSG}" | grep -q -E "HTTP 5[0-9]{2}"; then
+      elif [[ "\${HTTP_STATUS}" =~ ^5[0-9]{2}$ ]]; then
         echo "FAIL_5XX"
+        exit 1
+      elif [ -n "\${HTTP_STATUS}" ]; then
+        echo "FAIL_UNEXPECTED"
         exit 1
       else
         echo "FAIL_TRANSPORT"
         exit 1
       fi
     `;
+
     try {
-      const out = execFileSync('bash', ['-c', bashScript, 'test-sh', errMsg], { encoding: 'utf-8' });
+      const out = execFileSync('bash', ['-c', bashScript, 'test-sh', tmpResp, tmpErr], { encoding: 'utf-8' });
+      fs.rmSync(tmpResp, { force: true });
+      fs.rmSync(tmpErr, { force: true });
       return { status: 0, output: out.trim() };
     } catch (err) {
+      fs.rmSync(tmpResp, { force: true });
+      fs.rmSync(tmpErr, { force: true });
       return { status: err.status, output: (err.stdout || '').trim() };
     }
   };
 
-  // HTTP 404 -> skip gracefully
-  const res404 = evaluateApiError('gh: Not Found (HTTP 404)');
+  // 1. HTTP 404 with message "Not Found" -> skip gracefully
+  const res404 = evaluateApiHttpResponse('HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}');
   assert.equal(res404.status, 0);
   assert.equal(res404.output, 'SKIP_404');
 
-  // HTTP 403 -> fail
-  const res403 = evaluateApiError('gh: Forbidden (HTTP 403)');
-  assert.equal(res403.status, 1);
-  assert.equal(res403.output, 'FAIL_403');
+  // 2. HTTP 403 with message "Not Found" -> MUST fail (proves classification does NOT rely on "Not Found")
+  const res403NotFound = evaluateApiHttpResponse('HTTP/2.0 403 Forbidden\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}');
+  assert.equal(res403NotFound.status, 1, 'HTTP 403 containing message "Not Found" must fail, not skip');
+  assert.equal(res403NotFound.output, 'FAIL_403');
 
-  // HTTP 429 -> fail
-  const res429 = evaluateApiError('gh: API rate limit exceeded for user (HTTP 429)');
+  // 3. HTTP 429 -> MUST fail
+  const res429 = evaluateApiHttpResponse('HTTP/2.0 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n{"message":"API rate limit exceeded"}');
   assert.equal(res429.status, 1);
   assert.equal(res429.output, 'FAIL_429');
 
-  // HTTP 500 / 502 / 503 -> fail
-  const res500 = evaluateApiError('gh: Server Error (HTTP 500)');
+  // 4. HTTP 500 -> MUST fail
+  const res500 = evaluateApiHttpResponse('HTTP/2.0 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n{"message":"Internal Server Error"}');
   assert.equal(res500.status, 1);
   assert.equal(res500.output, 'FAIL_5XX');
 
-  // Network / Transport error -> fail
-  const resTransport = evaluateApiError('curl: (7) Failed to connect to api.github.com port 443: Connection refused');
+  // 5. Transport/network failure -> MUST fail
+  const resTransport = evaluateApiHttpResponse('curl: (7) Failed to connect to api.github.com port 443: Connection refused', true);
   assert.equal(resTransport.status, 1);
   assert.equal(resTransport.output, 'FAIL_TRANSPORT');
 });
