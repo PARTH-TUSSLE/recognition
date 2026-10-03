@@ -31,7 +31,7 @@ Key directories and files for day-to-day work:
   - `src/badgesInfo.json`: Badges metadata, slugs, criteria, and image paths.
 - `static/`: Static assets, including badge images and icons.
 - `gatsby-config.js`: Site metadata, Gatsby plugins, and source filesystem configuration.
-- `package.json`: Node dependencies, build scripts, and engine specifications.
+- `package.json`: Node dependencies and build scripts.
 - `Makefile`: Standard development automation targets.
 
 ## UI and Sistent Guidance
@@ -40,7 +40,7 @@ This repository consumes the Layer5 design system via `@sistent/sistent` with `s
 
 - **Component Reuse:** Prefer existing `@sistent/sistent` UI primitives before creating custom components.
 - **Design Tokens:** Prefer existing Sistent theme/token values over hardcoded brand colors.
-- **Design Guidance Reference:** Consult `node_modules/@sistent/sistent/DESIGN.md` when available, or the Sistent release tag matching the resolved version in `package-lock.json` rather than `master`. Do not create or maintain a separate `DESIGN.md` in this repository.
+- **Design Guidance Reference:** Consult the canonical Sistent design contract at [layer5io/sistent DESIGN.md](https://github.com/layer5io/sistent/blob/master/DESIGN.md) (or `node_modules/@sistent/sistent/DESIGN.md` if packaged in future versions). Do not create or maintain a separate `DESIGN.md` in this repository.
 
 ## Contribution Guidelines
 
