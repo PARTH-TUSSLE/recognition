@@ -4,25 +4,19 @@
     "name": "Sistent Contributor",
     "ruleId": "rule-sistent-contributor",
     "description": "Consistent & impactful contributions to Sistent design system and components",
-    "repositories": ["layer5io/sistent"],
+    "repositories": [
+      "layer5io/sistent"
+    ],
     "includePatterns": [
       "src/**",
-      "packages/**",
+      "examples/**"
+    ],
+    "excludePatterns": [
       "system/**",
-      "examples/**",
-      "scripts/**",
+      "src/assets/**",
       "package.json",
       "tsconfig.json",
       "Makefile"
-    ],
-    "excludePatterns": [
-      ".github/**",
-      ".gitignore",
-      "LICENSE",
-      "CODE_OF_CONDUCT.md",
-      "README.md",
-      "CONTRIBUTING*.md",
-      "MAINTAINERS.md"
     ]
   },
   {
@@ -30,21 +24,26 @@
     "name": "Meshery",
     "ruleId": "rule-meshery-core",
     "description": "Consistent & impactful contributions to Meshery core functional codebase",
-    "repositories": ["meshery/meshery"],
+    "repositories": [
+      "meshery/meshery"
+    ],
     "includePatterns": [
       "server/**",
       "mesheryctl/**",
-      "models/**",
-      "install/**",
       "ui/**",
-      "provider-ui/**",
-      "main.go",
-      "Makefile",
-      "go.mod",
-      "go.sum"
+      "provider-ui/**"
     ],
     "excludePatterns": [
+      "models/**",
+      "install/**",
+      "main.go",
+      "go.mod",
+      "go.sum",
+      "Makefile",
       "docs/**",
+      "ui/docs/**",
+      "ui/public/**",
+      "ui/scripts/**",
       "README.md",
       "ROADMAP.md",
       "ADOPTERS.md",
@@ -59,23 +58,24 @@
     "name": "Meshery Operator",
     "ruleId": "rule-meshery-operator",
     "description": "Contributions to Meshery Operator controllers, APIs, and manifests",
-    "repositories": ["meshery/meshery-operator"],
+    "repositories": [
+      "meshery/meshery-operator"
+    ],
     "includePatterns": [
       "controllers/**",
       "api/**",
       "pkg/**",
+      "cmd/**"
+    ],
+    "excludePatterns": [
+      "zz_generated*",
+      "**/zz_generated*",
       "bundle/**",
       "config/**",
       "main.go",
       "Makefile",
       "go.mod",
       "go.sum"
-    ],
-    "excludePatterns": [
-      ".github/**",
-      "LICENSE",
-      "README.md",
-      "CODE_OF_CONDUCT.md"
     ]
   },
   {
@@ -83,22 +83,22 @@
     "name": "MeshSync",
     "ruleId": "rule-meshsync",
     "description": "Contributions to MeshSync discovery daemon logic and plugins",
-    "repositories": ["meshery/meshsync"],
+    "repositories": [
+      "meshery/meshsync"
+    ],
     "includePatterns": [
       "internal/**",
       "pkg/**",
+      "meshsync/**"
+    ],
+    "excludePatterns": [
+      "integration-tests/**",
       "plugins/**",
       "cache/**",
       "main.go",
       "Makefile",
       "go.mod",
       "go.sum"
-    ],
-    "excludePatterns": [
-      ".github/**",
-      "LICENSE",
-      "README.md",
-      "CODE_OF_CONDUCT.md"
     ]
   },
   {
@@ -112,17 +112,26 @@
     ],
     "repoSpecificIncludePatterns": {
       "meshery/meshery": [
-        "docs/**"
+        "docs/**/*.md",
+        "docs/**/*.mdx"
       ],
       "layer5io/docs": [
-        "content/**",
-        "pages/**"
+        "content/**/*.md",
+        "content/**/*.mdx"
       ]
     },
     "excludePatterns": [
-      ".github/**",
-      "LICENSE",
-      "README.md"
+      "pages/**",
+      "catalog/**",
+      "integrations/**",
+      "data/**",
+      "meetings/**",
+      "static/**",
+      "archive/**",
+      "proposals/**",
+      "layouts/**",
+      "themes/**",
+      "assets/**"
     ]
   },
   {
@@ -137,34 +146,29 @@
     "repoSpecificIncludePatterns": {
       "meshery/meshery.io": [
         "catalog/**",
-        "collections/catalog/**"
+        "collections/_catalog/**"
       ],
       "meshery/meshery": [
         "models/**"
       ]
     },
-    "excludePatterns": [
-      ".github/**",
-      "LICENSE",
-      "README.md"
-    ]
+    "excludePatterns": []
   },
   {
     "slug": "landscape",
     "name": "Landscape",
     "ruleId": "rule-landscape",
     "description": "Contributions to Layer5 Landscape collection",
-    "repositories": ["layer5io/layer5"],
+    "repositories": [
+      "layer5io/layer5"
+    ],
     "includePatterns": [
       "src/collections/landscape/**"
     ],
     "excludePatterns": [
       "src/collections/blog/**",
       "src/collections/news/**",
-      "src/collections/members/**",
-      ".github/**",
-      "LICENSE",
-      "README.md"
+      "src/collections/members/**"
     ]
   },
   {
@@ -177,10 +181,11 @@
       "layer5io/sistent",
       "layer5io/layer5"
     ],
-    "requiredAnyLabels": [
-      "area/ui",
-      "area/ux"
-    ],
+    "repoSpecificRequiredAnyLabels": {
+      "meshery/meshery": [
+        "component/ui"
+      ]
+    },
     "repoSpecificIncludePatterns": {
       "meshery/meshery": [
         "ui/**",
@@ -188,8 +193,7 @@
       ],
       "layer5io/sistent": [
         "src/**",
-        "system/**",
-        "examples/**"
+        "system/**"
       ],
       "layer5io/layer5": [
         "src/components/**",
@@ -199,11 +203,8 @@
       ]
     },
     "excludePatterns": [
-      "**/__tests__/**",
-      "**/*.test.*",
-      "**/*.spec.*",
-      "package-lock.json",
-      "yarn.lock"
+      "src/collections/**",
+      "src/assets/**"
     ]
   }
 ]

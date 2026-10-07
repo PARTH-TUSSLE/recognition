@@ -1,16 +1,38 @@
-const defaultRules = require('./badge-rules.json');
+const defaultRules = require("./badge-rules.json");
 
 /**
  * Authoritative allowlist of participating Track 2 ecosystem repositories.
  */
 const SUPPORTED_REPOSITORIES = Object.freeze([
-  'layer5io/sistent',
-  'meshery/meshery',
-  'meshery/meshery-operator',
-  'meshery/meshsync',
-  'layer5io/docs',
-  'meshery/meshery.io',
-  'layer5io/layer5'
+  "layer5io/sistent",
+  "meshery/meshery",
+  "meshery/meshery-operator",
+  "meshery/meshsync",
+  "layer5io/docs",
+  "meshery/meshery.io",
+  "layer5io/layer5"
+]);
+
+/**
+ * Universal Track 2 exclusions applied consistently to all Track 2 badge rules:
+ * - test files: tests, test.go, __tests__
+ * - lockfiles: package-lock.json, yarn.lock, go.sum (at root or nested)
+ * - repository governance: .github/**, LICENSE, README.md, CONTRIBUTING*.md
+ */
+const UNIVERSAL_EXCLUSIONS = Object.freeze([
+  "**/*.test.*",
+  "**/*_test.go",
+  "**/__tests__/**",
+  "package-lock.json",
+  "**/package-lock.json",
+  "yarn.lock",
+  "**/yarn.lock",
+  "go.sum",
+  "**/go.sum",
+  ".github/**",
+  "LICENSE",
+  "README.md",
+  "CONTRIBUTING*.md"
 ]);
 
 /**
@@ -19,7 +41,7 @@ const SUPPORTED_REPOSITORIES = Object.freeze([
  * @returns {boolean}
  */
 function isSupportedRepository(repository) {
-  if (!repository || typeof repository !== 'string') return false;
+  if (!repository || typeof repository !== "string") return false;
   return SUPPORTED_REPOSITORIES.includes(repository.trim().toLowerCase());
 }
 
@@ -30,42 +52,42 @@ function isSupportedRepository(repository) {
  * - `*`  : wildcards within path segment / filename
  * - exact file or path matches
  *
- * @param {string} pattern Glob pattern (e.g. "src/**", "**\/*.test.*")
+ * @param {string} pattern Glob pattern (e.g. "src/**")
  * @param {string} filePath Normalized file path (e.g. "src/components/button.tsx")
  * @returns {boolean}
  */
 function matchGlob(pattern, filePath) {
   if (!pattern || !filePath) return false;
 
-  const normPath = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
-  const normPattern = pattern.replace(/\\/g, '/').replace(/^\/+/, '');
+  const normPath = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  const normPattern = pattern.replace(/\\/g, "/").replace(/^\/+/, "");
 
   if (normPattern === normPath) return true;
 
-  let regexStr = '^';
+  let regexStr = "^";
   let i = 0;
   while (i < normPattern.length) {
     const c = normPattern[i];
-    if (c === '*' && normPattern[i + 1] === '*') {
-      if (normPattern[i + 2] === '/') {
-        regexStr += '(?:.*/)?';
+    if (c === "*" && normPattern[i + 1] === "*") {
+      if (normPattern[i + 2] === "/") {
+        regexStr += "(?:.*/)?";
         i += 3;
       } else {
-        regexStr += '.*';
+        regexStr += ".*";
         i += 2;
       }
-    } else if (c === '*') {
-      regexStr += '[^/]*';
+    } else if (c === "*") {
+      regexStr += "[^/]*";
       i += 1;
-    } else if (['.', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']'].includes(c)) {
-      regexStr += '\\' + c;
+    } else if (["[", "]", ".", "+", "?", "^", "$", "{", "}", "(", ")", "|"].includes(c)) {
+      regexStr += "\\" + c;
       i += 1;
     } else {
       regexStr += c;
       i += 1;
     }
   }
-  regexStr += '$';
+  regexStr += "$";
 
   try {
     return new RegExp(regexStr).test(normPath);
@@ -83,9 +105,9 @@ function normalizeLabels(labels) {
   if (!Array.isArray(labels)) return [];
   return labels
     .map(label => {
-      if (typeof label === 'string') return label.trim().toLowerCase();
-      if (label && typeof label.name === 'string') return label.name.trim().toLowerCase();
-      return '';
+      if (typeof label === "string") return label.trim().toLowerCase();
+      if (label && typeof label.name === "string") return label.name.trim().toLowerCase();
+      return "";
     })
     .filter(Boolean);
 }
@@ -99,9 +121,9 @@ function normalizeFiles(files) {
   if (!Array.isArray(files)) return [];
   return files
     .map(file => {
-      if (typeof file === 'string') return file.trim().replace(/\\/g, '/');
-      if (file && typeof file.filename === 'string') return file.filename.trim().replace(/\\/g, '/');
-      return '';
+      if (typeof file === "string") return file.trim().replace(/\\/g, "/");
+      if (file && typeof file.filename === "string") return file.filename.trim().replace(/\\/g, "/");
+      return "";
     })
     .filter(Boolean);
 }
@@ -119,7 +141,7 @@ function normalizeFiles(files) {
  * @returns {{ eligibleBadges: Array<{ slug: string, name: string, reason: string, ruleId: string }>, isSupportedRepo: boolean }}
  */
 function evaluateBadges(prContext = {}, rules = defaultRules) {
-  const repository = (prContext.repository || prContext.repo || '').trim().toLowerCase();
+  const repository = (prContext.repository || prContext.repo || "").trim().toLowerCase();
   const rawLabels = normalizeLabels(prContext.labels);
   const rawFiles = normalizeFiles(prContext.changedFiles || prContext.files);
 
@@ -140,10 +162,23 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
       continue;
     }
 
-    // Check label requirements (if rule specifies requiredAnyLabels)
-    if (rule.requiredAnyLabels && rule.requiredAnyLabels.length > 0) {
-      const requiredAny = rule.requiredAnyLabels.map(l => l.toLowerCase());
-      const hasMatchingLabel = rawLabels.some(label => requiredAny.includes(label));
+    // Determine applicable requiredAnyLabels for this repository
+    let requiredLabels = null;
+    if (rule.repoSpecificRequiredAnyLabels) {
+      for (const [repoKey, labels] of Object.entries(rule.repoSpecificRequiredAnyLabels)) {
+        if (repoKey.toLowerCase() === repository) {
+          requiredLabels = labels;
+          break;
+        }
+      }
+    }
+    if (requiredLabels === null && Array.isArray(rule.requiredAnyLabels)) {
+      requiredLabels = rule.requiredAnyLabels;
+    }
+
+    if (Array.isArray(requiredLabels) && requiredLabels.length > 0) {
+      const requiredNormalized = requiredLabels.map(l => l.toLowerCase());
+      const hasMatchingLabel = rawLabels.some(label => requiredNormalized.includes(label));
       if (!hasMatchingLabel) {
         continue;
       }
@@ -159,7 +194,14 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
       }
     }
 
-    const excludePatterns = rule.excludePatterns || [];
+    let excludePatterns = (rule.excludePatterns || []).concat(UNIVERSAL_EXCLUSIONS);
+    if (rule.repoSpecificExcludePatterns) {
+      for (const [repoKey, patterns] of Object.entries(rule.repoSpecificExcludePatterns)) {
+        if (repoKey.toLowerCase() === repository) {
+          excludePatterns = excludePatterns.concat(patterns);
+        }
+      }
+    }
 
     // Filter changed files: must match at least one include pattern, and NOT match any exclude pattern
     const matchingFiles = rawFiles.filter(filePath => {
@@ -170,12 +212,12 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
     });
 
     if (matchingFiles.length > 0) {
-      const sampleFiles = matchingFiles.slice(0, 3).join(', ');
-      const moreSuffix = matchingFiles.length > 3 ? ` and ${matchingFiles.length - 3} more` : '';
+      const sampleFiles = matchingFiles.slice(0, 3).join(", ");
+      const moreSuffix = matchingFiles.length > 3 ? ` and ${matchingFiles.length - 3} more` : "";
       let reason = `Modified ${matchingFiles.length} file(s) matching criteria (${sampleFiles}${moreSuffix})`;
 
-      if (rule.requiredAnyLabels && rule.requiredAnyLabels.length > 0) {
-        const matchedLabel = rawLabels.find(l => rule.requiredAnyLabels.map(r => r.toLowerCase()).includes(l));
+      if (Array.isArray(requiredLabels) && requiredLabels.length > 0) {
+        const matchedLabel = rawLabels.find(l => requiredLabels.map(r => r.toLowerCase()).includes(l));
         reason = `PR labeled '${matchedLabel}' and modified ${matchingFiles.length} file(s) (${sampleFiles}${moreSuffix})`;
       }
 
@@ -193,6 +235,7 @@ function evaluateBadges(prContext = {}, rules = defaultRules) {
 
 module.exports = {
   SUPPORTED_REPOSITORIES,
+  UNIVERSAL_EXCLUSIONS,
   isSupportedRepository,
   evaluateBadges,
   matchGlob,

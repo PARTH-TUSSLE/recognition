@@ -68,7 +68,7 @@ test('orchestrateAwards produces pending award on qualifying fresh PR', () => {
   const prMetadata = {
     repository: 'layer5io/sistent',
     prAuthor: 'contributor1',
-    changedFiles: ['src/components/Button/index.tsx'],
+    changedFiles: ['examples/sample-app/index.tsx'],
     labels: ['enhancement'],
     commits: [
       {
@@ -143,7 +143,7 @@ test('orchestrateAwards filters out already awarded badges (Idempotency)', () =>
   const prMetadata = {
     repository: 'layer5io/sistent',
     prAuthor: 'contributor1',
-    changedFiles: ['src/components/Button/index.tsx'],
+    changedFiles: ['examples/sample-app/index.tsx'],
     labels: ['enhancement'],
     commits: [
       {
