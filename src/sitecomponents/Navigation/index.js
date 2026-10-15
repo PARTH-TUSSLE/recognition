@@ -38,6 +38,11 @@ function Navigation({ theme, toggleTheme, showSignUpButton, logo }) {
     const fetchData = async () => {
       try {
         const token = getCookieValue("provider_token");
+
+        if (!token) {
+          return;
+        }
+
         const response = await axios.get(CLOUD_USER_API, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -49,7 +54,7 @@ function Navigation({ theme, toggleTheme, showSignUpButton, logo }) {
         }
 
         const data = response.data;
-        // setUserData(data);
+        setUserData(data);
       } catch (error) {
         console.error("There was a problem with your fetch operation:", error);
       }
